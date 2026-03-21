@@ -16,17 +16,25 @@ const formattedDate = date.toLocaleDateString("en-US", {
 });
 ---
 
-<BaseLayout title={`${title} | rohank`} description={description}>
+<BaseLayout title={`${title} | @rkrishn7`} description={description}>
   <article>
+    <div class="mb-6">
+      <a
+        href="/blog"
+        class="text-sm font-mono text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors"
+      >
+        &larr; back to blog
+      </a>
+    </div>
     <header class="mb-8">
-      <h1 class="text-3xl font-bold mb-2">{title}</h1>
-      <div class="flex items-center gap-3 text-sm text-slate-500 dark:text-slate-400">
-        <time datetime={date.toISOString()}>{formattedDate}</time>
+      <h1 class="text-3xl font-bold font-mono mb-3">{title}</h1>
+      <div class="flex items-center gap-3 text-sm text-[var(--color-text-muted)]">
+        <time datetime={date.toISOString()} class="font-mono">{formattedDate}</time>
         {
           tags && tags.length > 0 && (
             <div class="flex gap-2">
               {tags.map((tag) => (
-                <span class="px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-xs">
+                <span class="px-2 py-0.5 rounded-full text-xs font-mono bg-[var(--color-accent)]/10 text-[var(--color-accent)]">
                   {tag}
                 </span>
               ))}
@@ -34,8 +42,9 @@ const formattedDate = date.toLocaleDateString("en-US", {
           )
         }
       </div>
+      <div class="mt-4 h-[2px] bg-gradient-to-r from-[#06b6d4] to-[#10b981] rounded-full"></div>
     </header>
-    <div class="prose dark:prose-invert max-w-none">
+    <div class="prose max-w-none">
       <slot />
     </div>
   </article>

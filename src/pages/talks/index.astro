@@ -1,0 +1,32 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import TalkCard from "../../components/TalkCard.astro";
+import { getCollection } from "astro:content";
+
+const talks = (await getCollection("talks"))
+  .sort((a, b) => b.data.date.valueOf() - a.data.date.valueOf());
+---
+
+<BaseLayout title="Talks | @rkrishn7">
+  <h1 class="font-mono text-3xl font-bold mb-8">
+    <span class="text-[var(--color-text-muted)]">//</span> talks
+  </h1>
+  {talks.length > 0 ? (
+    <div class="flex flex-col gap-3">
+      {talks.map((talk, i) => (
+        <div class="fade-up" style={`transition-delay: ${i * 100}ms`}>
+          <TalkCard
+            title={talk.data.title}
+            event={talk.data.event}
+            date={talk.data.date}
+            description={talk.data.description}
+            slug={talk.slug}
+            tags={talk.data.tags}
+          />
+        </div>
+      ))}
+    </div>
+  ) : (
+    <p class="text-[var(--color-text-muted)]">No talks yet.</p>
+  )}
+</BaseLayout>

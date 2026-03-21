@@ -1,0 +1,68 @@
+<div class="gradient-orbs" aria-hidden="true">
+  <div class="orb orb-cyan"></div>
+  <div class="orb orb-emerald"></div>
+</div>
+
+<style>
+  .gradient-orbs {
+    position: absolute;
+    inset: -120px;
+    pointer-events: none;
+  }
+
+  .orb {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(80px);
+    opacity: 0.15;
+  }
+
+  :global(.dark) .orb {
+    opacity: 0.12;
+  }
+
+  .orb-cyan {
+    width: 400px;
+    height: 400px;
+    background: #06b6d4;
+    top: -30%;
+    left: -5%;
+    animation: drift 12s ease-in-out infinite;
+  }
+
+  .orb-emerald {
+    width: 350px;
+    height: 350px;
+    background: #10b981;
+    bottom: -20%;
+    right: 25%;
+    animation: drift 15s ease-in-out infinite reverse;
+  }
+
+  @media (max-width: 640px) {
+    .orb-cyan {
+      width: 250px;
+      height: 250px;
+    }
+    .orb-emerald {
+      width: 200px;
+      height: 200px;
+    }
+  }
+
+  @keyframes drift {
+    0%,
+    100% {
+      transform: translate(0, 0);
+    }
+    25% {
+      transform: translate(30px, -20px);
+    }
+    50% {
+      transform: translate(-20px, 15px);
+    }
+    75% {
+      transform: translate(15px, 25px);
+    }
+  }
+</style>

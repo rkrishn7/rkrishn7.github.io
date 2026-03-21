@@ -3,7 +3,123 @@
 @tailwind utilities;
 
 @layer base {
-  body {
-    @apply bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100;
+  :root {
+    --color-bg: #f8fafc;
+    --color-surface: #ffffff;
+    --color-surface-hover: #f1f5f9;
+    --color-border: #e2e8f0;
+    --color-border-active: #cbd5e1;
+    --color-text: #0f172a;
+    --color-text-secondary: #475569;
+    --color-text-muted: #64748b;
+    --color-accent: #0891b2;
+    --color-accent-hover: #0e7490;
+    --color-accent-secondary: #059669;
   }
+
+  .dark {
+    --color-bg: #0a0e17;
+    --color-surface: #111827;
+    --color-surface-hover: #1a2332;
+    --color-border: #1e293b;
+    --color-border-active: #334155;
+    --color-text: #e2e8f0;
+    --color-text-secondary: #94a3b8;
+    --color-text-muted: #64748b;
+    --color-accent: #06b6d4;
+    --color-accent-hover: #22d3ee;
+    --color-accent-secondary: #10b981;
+  }
+
+  body {
+    background-color: var(--color-bg);
+    color: var(--color-text);
+    background-image: radial-gradient(
+      circle,
+      var(--color-border) 1px,
+      transparent 1px
+    );
+    background-size: 24px 24px;
+  }
+
+  /* Gradient accent bar at top of page */
+  body::before {
+    content: "";
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(
+      90deg,
+      #06b6d4,
+      #10b981,
+      #06b6d4
+    );
+    background-size: 200% 100%;
+    animation: shimmer 3s ease-in-out infinite;
+    z-index: 100;
+  }
+}
+
+/* Animations */
+@keyframes shimmer {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+@keyframes drift {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  25% {
+    transform: translate(30px, -20px);
+  }
+  50% {
+    transform: translate(-20px, 15px);
+  }
+  75% {
+    transform: translate(15px, 25px);
+  }
+}
+
+/* Scroll reveal */
+.fade-up {
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity 0.6s ease-out, transform 0.6s ease-out;
+}
+
+.fade-up.animate-in {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Glow hover utility */
+.glow-hover {
+  transition: box-shadow 0.3s ease, border-color 0.3s ease;
+}
+
+.glow-hover:hover {
+  box-shadow: 0 0 20px rgba(6, 182, 212, 0.15);
+}
+
+.dark .glow-hover:hover {
+  box-shadow: 0 0 20px rgba(6, 182, 212, 0.25);
 }

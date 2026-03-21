@@ -1,21 +1,92 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
+
+const technologies = [
+  "Rust",
+  "Apache DataFusion",
+  "Apache Arrow",
+  "Apache Parquet",
+  "SQL",
+  "Linux",
+];
+
+const interests = [
+  "Query engines & database internals",
+  "Stream processing",
+  "Distributed systems",
+  "Systems programming",
+];
+
+const socialLinks = [
+  { href: "https://github.com/rkrishn7", label: "GitHub" },
+  { href: "https://linkedin.com/in/rkrishn", label: "LinkedIn" },
+  { href: "mailto:rohan@fastmail.us", label: "Email" },
+];
 ---
 
-<BaseLayout title="About | rohank">
-  <h1 class="text-3xl font-bold mb-8">About</h1>
-  <div class="prose dark:prose-invert max-w-none">
-    <p>
-      Hi, I'm Rohan Krishnaswamy — a software engineer based in Toronto.
-    </p>
-    <p>
-      I'm interested in systems programming, distributed systems, and the tools
-      we use to build software. This site is where I write about things I've
-      learned and problems I've found interesting.
-    </p>
-    <p>
-      You can find me on <a href="https://github.com/rkrishn7">GitHub</a> or
-      reach me via <a href="mailto:rohan@fastmail.us">email</a>.
-    </p>
+<BaseLayout title="About | @rkrishn7">
+  <h1 class="font-mono text-3xl font-bold mb-8">
+    <span class="text-[var(--color-text-muted)]">//</span> about
+  </h1>
+
+  <div class="space-y-10">
+    <section class="space-y-4">
+      <p class="text-lg text-[var(--color-text-secondary)] leading-relaxed">
+        Hi, I'm Rohan — a systems engineer based in Los Angeles.
+        I work on data systems internals at <a href="https://massive.com" target="_blank" rel="noopener noreferrer" class="text-[var(--color-text)] hover:text-[var(--color-accent)] transition-colors underline decoration-[var(--color-border)] hover:decoration-[var(--color-accent)]">Massive</a>, where I'm building
+        <span class="text-[var(--color-text)]">Atlas</span> — a financial markets database powered by <a href="https://github.com/apache/datafusion" target="_blank" rel="noopener noreferrer" class="text-[var(--color-text)] hover:text-[var(--color-accent)] transition-colors underline decoration-[var(--color-border)] hover:decoration-[var(--color-accent)]">Apache DataFusion</a>. Day to day, that means working across the stack: query planning and optimization, incremental and continuous execution, and the storage and networking layers underneath.
+      </p>
+      <p class="text-lg text-[var(--color-text-secondary)] leading-relaxed">
+        Lately I've been deep in stream processing — extending DataFusion to handle unbounded data with correct, continuous execution. I <a href="/talks" class="text-[var(--color-text)] hover:text-[var(--color-accent)] transition-colors underline decoration-[var(--color-border)] hover:decoration-[var(--color-accent)]">talked about this</a> recently at the DataFusion meetup in Stockholm.
+      </p>
+      <p class="text-lg text-[var(--color-text-secondary)] leading-relaxed">
+        I tend to pull on threads — if I'm using a system, I want to understand how it works. That curiosity drives most of what I share here.
+      </p>
+    </section>
+
+    <section>
+      <h2 class="font-mono text-lg text-[var(--color-text-secondary)] mb-4">
+        <span class="text-[var(--color-text-muted)]">//</span> toolbox
+      </h2>
+      <div class="flex flex-wrap gap-2">
+        {technologies.map((tech) => (
+          <span class="px-3 py-1.5 rounded-md text-sm font-mono border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-accent)]">
+            {tech}
+          </span>
+        ))}
+      </div>
+    </section>
+
+    <section>
+      <h2 class="font-mono text-lg text-[var(--color-text-secondary)] mb-4">
+        <span class="text-[var(--color-text-muted)]">//</span> interests
+      </h2>
+      <ul class="space-y-2">
+        {interests.map((interest) => (
+          <li class="flex items-start gap-2 text-[var(--color-text-secondary)]">
+            <span class="text-[var(--color-accent)] mt-1.5 text-xs">&#9656;</span>
+            {interest}
+          </li>
+        ))}
+      </ul>
+    </section>
+
+    <section>
+      <h2 class="font-mono text-lg text-[var(--color-text-secondary)] mb-4">
+        <span class="text-[var(--color-text-muted)]">//</span> elsewhere
+      </h2>
+      <div class="flex flex-wrap gap-3">
+        {socialLinks.map(({ href, label }) => (
+          <a
+            href={href}
+            target={href.startsWith("mailto") ? undefined : "_blank"}
+            rel={href.startsWith("mailto") ? undefined : "noopener noreferrer"}
+            class="px-4 py-2 rounded-md text-sm font-mono border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:text-[var(--color-accent)] hover:border-[var(--color-accent)] glow-hover transition-all"
+          >
+            {label}
+          </a>
+        ))}
+      </div>
+    </section>
   </div>
 </BaseLayout>

@@ -1,36 +1,143 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
 import PostCard from "../components/PostCard.astro";
+import TalkCard from "../components/TalkCard.astro";
+import GradientOrbs from "../components/GradientOrbs.astro";
 import { getCollection } from "astro:content";
 
 const posts = (await getCollection("blog", ({ data }) => !data.draft))
   .sort((a, b) => b.data.date.valueOf() - a.data.date.valueOf())
   .slice(0, 5);
+
+const featuredTalks = (await getCollection("talks", ({ data }) => data.featured))
+  .sort((a, b) => b.data.date.valueOf() - a.data.date.valueOf())
+  .slice(0, 2);
 ---
 
-<BaseLayout title="rohank">
-  <section class="mb-12">
-    <h1 class="text-3xl font-bold mb-4">Hey, I'm Rohan</h1>
-    <p class="text-slate-600 dark:text-slate-400 leading-relaxed">
-      Software engineer. I write about systems, programming, and whatever else I find interesting.
-    </p>
+<BaseLayout title="@rkrishn7">
+  <section class="relative mb-16 py-12">
+    <GradientOrbs />
+    <div class="relative">
+      <h1 class="text-4xl sm:text-5xl font-bold font-mono mb-2 flex items-center">
+        <span class="typewriter" aria-label="Hey, I'm Rohan">Hey, I'm Rohan</span><span class="cursor cursor-heading w-[3px] h-[1em] bg-[var(--color-accent)] ml-1 shrink-0"></span>
+      </h1>
+      <p class="font-mono text-sm text-[var(--color-accent)] mb-6 flex items-center">
+        <span class="typewriter-sub" aria-label="systems engineer">systems engineer</span><span class="cursor cursor-sub w-[2px] h-[1em] bg-[var(--color-accent)] ml-1 shrink-0"></span>
+      </p>
+      <p class="text-lg text-[var(--color-text-secondary)] leading-relaxed max-w-2xl">
+        I work on data systems internals at <a href="https://massive.com" target="_blank" rel="noopener noreferrer" class="text-[var(--color-text)] hover:text-[var(--color-accent)] transition-colors underline decoration-[var(--color-border)] hover:decoration-[var(--color-accent)]">Massive</a>, where I'm building <span class="text-[var(--color-text)]">Atlas</span> — a financial markets database on Apache DataFusion.
+      </p>
+      <p class="text-lg text-[var(--color-text-secondary)] leading-relaxed max-w-2xl mt-3">
+        I like understanding how things work under the hood — lately that's query engines and stream processing, along with the data and distributed systems problems that follow.
+      </p>
+    </div>
   </section>
 
+  {featuredTalks.length > 0 && (
+    <section class="mb-12">
+      <h2 class="font-mono text-lg text-[var(--color-text-secondary)] mb-6">
+        <span class="text-[var(--color-text-muted)]">//</span> talks
+      </h2>
+      <div class="flex flex-col gap-3">
+        {featuredTalks.map((talk, i) => (
+          <div class="fade-up" style={`transition-delay: ${i * 100}ms`}>
+            <TalkCard
+              title={talk.data.title}
+              event={talk.data.event}
+              date={talk.data.date}
+              description={talk.data.description}
+              slug={talk.slug}
+              tags={talk.data.tags}
+            />
+          </div>
+        ))}
+      </div>
+      <a
+        href="/talks"
+        class="inline-block mt-4 text-sm font-mono text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors"
+      >
+        view all &rarr;
+      </a>
+    </section>
+  )}
+
   <section>
-    <h2 class="text-xl font-semibold mb-4">Recent Posts</h2>
+    <h2 class="font-mono text-lg text-[var(--color-text-secondary)] mb-6">
+      <span class="text-[var(--color-text-muted)]">//</span> recent posts
+    </h2>
     {posts.length > 0 ? (
-      <div class="divide-y divide-slate-200 dark:divide-slate-700">
-        {posts.map((post) => (
-          <PostCard
-            title={post.data.title}
-            date={post.data.date}
-            description={post.data.description}
-            slug={post.slug}
-          />
+      <div class="flex flex-col gap-3">
+        {posts.map((post, i) => (
+          <div class="fade-up" style={`transition-delay: ${i * 100}ms`}>
+            <PostCard
+              title={post.data.title}
+              date={post.data.date}
+              description={post.data.description}
+              slug={post.slug}
+              tags={post.data.tags}
+            />
+          </div>
         ))}
       </div>
     ) : (
-      <p class="text-slate-500 dark:text-slate-400">No posts yet.</p>
+      <p class="text-[var(--color-text-muted)]">No posts yet.</p>
     )}
   </section>
 </BaseLayout>
+
+<style>
+  .typewriter {
+    display: inline-block;
+    overflow: hidden;
+    white-space: nowrap;
+    width: 0;
+    animation: typing-heading 1.2s steps(14) 0.4s forwards;
+  }
+
+  .typewriter-sub {
+    display: inline-block;
+    overflow: hidden;
+    white-space: nowrap;
+    width: 0;
+    animation: typing-sub 0.8s steps(16) 1.8s forwards;
+  }
+
+  /* Heading cursor: blink during typing, then hide */
+  .cursor-heading {
+    animation: blink 1s step-end infinite;
+    animation-delay: 0s;
+    animation-fill-mode: forwards;
+  }
+  .cursor-heading {
+    animation: blink 1s step-end 1.6s, hide 0s 1.8s forwards;
+  }
+
+  /* Sub cursor: hidden initially, appears and blinks from 1.8s onward */
+  .cursor-sub {
+    opacity: 0;
+    animation: show 0s 1.8s forwards, blink 1s step-end infinite 1.8s;
+  }
+
+  @keyframes typing-heading {
+    from { width: 0; }
+    to { width: 14ch; }
+  }
+
+  @keyframes typing-sub {
+    from { width: 0; }
+    to { width: 16ch; }
+  }
+
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+  }
+
+  @keyframes hide {
+    to { opacity: 0; }
+  }
+
+  @keyframes show {
+    to { opacity: 1; }
+  }
+</style>
