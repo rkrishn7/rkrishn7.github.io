@@ -55,7 +55,7 @@ LIMIT 100`,
         <p class="ql-description">{step.description}</p>
         {step.sql && (
           <div class="ql-code-wrap">
-            <Code code={step.sql} lang="sql" themes={{ light: "github-light", dark: "tokyo-night" }} />
+            <Code code={step.sql} lang="sql" themes={{ light: "github-light", dark: "tokyo-night" }} transformers={[{ pre(node) { delete node.properties.tabindex; } }]} />
           </div>
         )}
         {step.costModel && (
