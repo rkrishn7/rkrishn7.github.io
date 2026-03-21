@@ -1,0 +1,697 @@
+---
+import { Code } from "astro:components";
+
+const steps = [
+  {
+    label: "Query Arrives",
+    description: "A query hits the system with an IN-list filter on a sort-prefix column.",
+    sql: `SELECT * FROM live_trades
+WHERE ticker = 'ESH6'
+  AND channel IN (360, 415)
+ORDER BY timestamp DESC
+LIMIT 100`,
+  },
+  {
+    label: "View Matching",
+    description: "The cost model analyzes the query's filters against the table's sort order. With IN-list partitioning awareness, it classifies both ticker and channel as constant prefix columns — and routes to the optimal table.",
+    costModel: true,
+  },
+  {
+    label: "Plan Construction",
+    description: "RocksExec detects the IN-list on a sort-prefix column with constant predecessors, and splits into one partition per value.",
+    planSplit: true,
+  },
+  {
+    label: "DataFusion Optimization",
+    description: "DataFusion sees two independently sorted partitions and inserts a SortPreservingMergeExec — a streaming k-way merge — instead of a full SortExec.",
+    planTree: true,
+  },
+  {
+    label: "Execution",
+    description: "Each partition scans only its narrowed key range in RocksDB. The streaming merge produces globally sorted output and stops after 100 rows — minimal I/O, no buffering.",
+    execution: true,
+  },
+];
+---
+
+<div class="query-lifecycle">
+  <div class="ql-steps">
+    {steps.map((step, i) => (
+      <button
+        class={`ql-step-btn ${i === 0 ? "active" : ""}`}
+        data-step={i}
+      >
+        <span class="ql-step-num">{i + 1}</span>
+        <span class="ql-step-label">{step.label}</span>
+      </button>
+    ))}
+  </div>
+  <div class="ql-progress-track">
+    <div class="ql-progress-bar" style="width: 20%"></div>
+  </div>
+  <div class="ql-panels">
+    {steps.map((step, i) => (
+      <div class={`ql-panel ${i === 0 ? "active" : ""}`} data-panel={i}>
+        <p class="ql-description">{step.description}</p>
+        {step.sql && (
+          <div class="ql-code-wrap">
+            <Code code={step.sql} lang="sql" themes={{ light: "github-light", dark: "tokyo-night" }} />
+          </div>
+        )}
+        {step.costModel && (
+          <div class="cm-card">
+            <div class="cm-section">
+              <div class="cm-heading">Filter Classification</div>
+              <div class="cm-filters">
+                <div class="cm-row">
+                  <code class="cm-expr">ticker = 'ESH6'</code>
+                  <span class="cm-badge cm-constant">constant</span>
+                </div>
+                <div class="cm-row">
+                  <code class="cm-expr">channel IN (360, 415)</code>
+                  <span class="cm-badge cm-constant-in">constant <span class="cm-badge-sub">IN-list</span></span>
+                </div>
+              </div>
+            </div>
+            <div class="cm-section">
+              <div class="cm-heading">Sort Prefix Coverage</div>
+              <div class="cm-prefix">
+                <div class="cm-col cm-locked">
+                  <div class="cm-col-name">ticker</div>
+                  <div class="cm-col-bar"></div>
+                </div>
+                <span class="cm-arrow">&rarr;</span>
+                <div class="cm-col cm-locked">
+                  <div class="cm-col-name">channel</div>
+                  <div class="cm-col-bar"></div>
+                </div>
+                <span class="cm-arrow">&rarr;</span>
+                <div class="cm-col cm-scan">
+                  <div class="cm-col-name">timestamp</div>
+                  <div class="cm-col-bar"></div>
+                </div>
+                <span class="cm-arrow">&rarr;</span>
+                <div class="cm-col cm-scan">
+                  <div class="cm-col-name">seq</div>
+                  <div class="cm-col-bar"></div>
+                </div>
+              </div>
+            </div>
+            <div class="cm-result">
+              <span class="cm-check">&#10003;</span> Routes to optimal table
+            </div>
+          </div>
+        )}
+        {step.planSplit && (
+          <div class="ps-card">
+            <div class="ps-before">
+              <div class="ps-node ps-node-muted">
+                <div class="ps-node-title">RocksExec</div>
+                <code class="ps-node-detail">channel IN (360, 415)</code>
+              </div>
+            </div>
+            <div class="ps-arrow-down">
+              <span class="ps-arrow-label">split</span>
+              <svg width="24" height="32" viewBox="0 0 24 32">
+                <path d="M12 0 V20 M6 16 L12 24 L18 16" fill="none" stroke="var(--color-accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </div>
+            <div class="ps-after">
+              <div class="ps-node ps-node-active">
+                <div class="ps-node-title">RocksExec <span class="ps-partition">P0</span></div>
+                <code class="ps-node-detail">channel = 360</code>
+                <div class="ps-node-ordering">ordering: [ts, seq]</div>
+              </div>
+              <div class="ps-node ps-node-active">
+                <div class="ps-node-title">RocksExec <span class="ps-partition">P1</span></div>
+                <code class="ps-node-detail">channel = 415</code>
+                <div class="ps-node-ordering">ordering: [ts, seq]</div>
+              </div>
+            </div>
+          </div>
+        )}
+        {step.planTree && (
+          <div class="pt-card">
+            <div class="pt-root">
+              <div class="ps-node ps-node-merge">
+                <div class="ps-node-title">SortPreservingMergeExec</div>
+                <code class="ps-node-detail">timestamp DESC</code>
+              </div>
+            </div>
+            <div class="pt-branches">
+              <svg class="pt-lines" viewBox="0 0 200 32" preserveAspectRatio="none">
+                <path d="M100 0 L50 32" fill="none" stroke="var(--color-border-active)" stroke-width="2"/>
+                <path d="M100 0 L150 32" fill="none" stroke="var(--color-border-active)" stroke-width="2"/>
+              </svg>
+            </div>
+            <div class="ps-after">
+              <div class="ps-node ps-node-active">
+                <div class="ps-node-title">RocksExec <span class="ps-partition">P0</span></div>
+                <code class="ps-node-detail">ch = 360</code>
+                <div class="ps-node-ordering ps-sorted">sorted</div>
+              </div>
+              <div class="ps-node ps-node-active">
+                <div class="ps-node-title">RocksExec <span class="ps-partition">P1</span></div>
+                <code class="ps-node-detail">ch = 415</code>
+                <div class="ps-node-ordering ps-sorted">sorted</div>
+              </div>
+            </div>
+          </div>
+        )}
+        {step.execution && (
+          <div class="ex-card">
+            <div class="ex-streams">
+              <div class="ex-stream">
+                <div class="ex-stream-label">P0</div>
+                <code class="ex-seek">seek(ESH6|360|..., ESH6|360|0xFF)</code>
+                <div class="ex-flow-arrow">&rarr;</div>
+                <div class="ex-stream-bar"></div>
+              </div>
+              <div class="ex-stream">
+                <div class="ex-stream-label">P1</div>
+                <code class="ex-seek">seek(ESH6|415|..., ESH6|415|0xFF)</code>
+                <div class="ex-flow-arrow">&rarr;</div>
+                <div class="ex-stream-bar"></div>
+              </div>
+            </div>
+            <div class="ex-merge-arrow">
+              <svg width="24" height="24" viewBox="0 0 24 24">
+                <path d="M12 0 V14 M6 10 L12 18 L18 10" fill="none" stroke="var(--color-accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </div>
+            <div class="ex-result">
+              <span class="ex-result-label">merge (top 100)</span>
+              <span class="ex-result-badge">100 rows &mdash; minimal I/O</span>
+            </div>
+          </div>
+        )}
+        {step.diagram && (
+          <pre class="ql-diagram"><code>{step.diagram}</code></pre>
+        )}
+      </div>
+    ))}
+  </div>
+</div>
+
+<style>
+  .query-lifecycle {
+    margin: 2rem 0;
+    border: 1px solid var(--color-border);
+    border-radius: 0.75rem;
+    overflow: hidden;
+    background-color: var(--color-surface);
+  }
+
+  .ql-steps {
+    display: flex;
+    gap: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .ql-steps::-webkit-scrollbar {
+    display: none;
+  }
+
+  .ql-progress-track {
+    height: 2px;
+    background-color: var(--color-border);
+  }
+
+  .ql-progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #06b6d4, #10b981);
+  }
+
+  .ql-step-btn {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    border: none;
+    background: transparent;
+    color: var(--color-text-muted);
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: color 0.2s, background-color 0.2s;
+    white-space: nowrap;
+  }
+
+  .ql-step-btn:hover {
+    color: var(--color-text);
+    background-color: var(--color-surface-hover);
+  }
+
+  .ql-step-btn.active {
+    color: var(--color-accent);
+  }
+
+  .ql-step-num {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.25rem;
+    height: 1.25rem;
+    border-radius: 50%;
+    font-size: 0.65rem;
+    font-weight: 600;
+    background-color: var(--color-border);
+    color: var(--color-text-muted);
+    flex-shrink: 0;
+    transition: background-color 0.2s, color 0.2s;
+  }
+
+  .ql-step-btn.active .ql-step-num {
+    background-color: var(--color-accent);
+    color: #fff;
+  }
+
+  .ql-panels {
+    padding: 1.25rem 1.5rem;
+    min-height: 10rem;
+  }
+
+  .ql-panel {
+    display: none;
+    animation: ql-fade-in 0.3s ease;
+  }
+
+  .ql-panel.active {
+    display: block;
+  }
+
+  @keyframes ql-fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .ql-description {
+    margin: 0 0 1rem 0;
+    color: var(--color-text-secondary);
+    font-size: 0.9rem;
+    line-height: 1.6;
+  }
+
+  .ql-code-wrap :global(pre) {
+    margin: 0;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--color-border);
+    font-size: 0.8rem;
+    line-height: 1.5;
+  }
+
+  .ql-diagram {
+    margin: 0;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    background-color: var(--color-bg);
+    border: 1px solid var(--color-border);
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.8rem;
+    line-height: 1.5;
+    overflow-x: auto;
+    color: var(--color-text);
+  }
+
+  .ql-diagram code {
+    background: transparent;
+    padding: 0;
+  }
+
+  /* Cost model card */
+  .cm-card {
+    border: 1px solid var(--color-border);
+    border-radius: 0.5rem;
+    overflow: hidden;
+    background-color: var(--color-bg);
+  }
+
+  .cm-section {
+    padding: 0.75rem 1rem;
+  }
+
+  .cm-section + .cm-section {
+    border-top: 1px solid var(--color-border);
+  }
+
+  .cm-heading {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-text-muted);
+    margin-bottom: 0.6rem;
+  }
+
+  .cm-filters {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+
+  .cm-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  .cm-expr {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.8rem;
+    color: var(--color-text);
+    background: transparent;
+    padding: 0;
+  }
+
+  .cm-badge {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.7rem;
+    font-weight: 500;
+    padding: 0.15rem 0.5rem;
+    border-radius: 9999px;
+    white-space: nowrap;
+  }
+
+  .cm-constant {
+    background-color: rgba(16, 185, 129, 0.15);
+    color: #10b981;
+  }
+
+  .cm-constant-in {
+    background-color: rgba(6, 182, 212, 0.15);
+    color: #06b6d4;
+  }
+
+  .cm-badge-sub {
+    font-size: 0.6rem;
+    opacity: 0.7;
+    padding: 0;
+    background: transparent;
+  }
+
+  .cm-prefix {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .cm-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.25rem;
+    flex: 1;
+  }
+
+  .cm-col-name {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.7rem;
+    color: var(--color-text-secondary);
+  }
+
+  .cm-col-bar {
+    width: 100%;
+    height: 4px;
+    border-radius: 2px;
+  }
+
+  .cm-locked .cm-col-bar {
+    background: linear-gradient(90deg, #06b6d4, #10b981);
+  }
+
+  .cm-locked .cm-col-name {
+    color: var(--color-text);
+    font-weight: 600;
+  }
+
+  .cm-scan .cm-col-bar {
+    background-color: var(--color-border);
+  }
+
+  .cm-arrow {
+    color: var(--color-text-muted);
+    font-size: 0.7rem;
+    margin-top: 0.8rem;
+  }
+
+  .cm-result {
+    padding: 0.6rem 1rem;
+    border-top: 1px solid var(--color-border);
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.8rem;
+    color: #10b981;
+    font-weight: 500;
+  }
+
+  .cm-check {
+    margin-right: 0.25rem;
+  }
+
+  /* Plan split (step 3) */
+  .ps-card, .pt-card, .ex-card {
+    border: 1px solid var(--color-border);
+    border-radius: 0.5rem;
+    background-color: var(--color-bg);
+    padding: 1.25rem;
+  }
+
+  .ps-before, .pt-root {
+    display: flex;
+    justify-content: center;
+  }
+
+  .ps-node {
+    border: 1px solid var(--color-border);
+    border-radius: 0.375rem;
+    padding: 0.5rem 0.75rem;
+    text-align: center;
+    min-width: 8rem;
+  }
+
+  .ps-node-muted {
+    background-color: var(--color-surface);
+    opacity: 0.7;
+  }
+
+  .ps-node-active {
+    background-color: var(--color-surface);
+    border-color: var(--color-accent);
+  }
+
+  .ps-node-merge {
+    background-color: var(--color-surface);
+    border-color: #10b981;
+  }
+
+  .ps-node-title {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--color-text);
+    margin-bottom: 0.2rem;
+  }
+
+  .ps-node-detail {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.7rem;
+    color: var(--color-text-secondary);
+    background: transparent;
+    padding: 0;
+  }
+
+  .ps-node-ordering {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.6rem;
+    color: var(--color-text-muted);
+    margin-top: 0.25rem;
+  }
+
+  .ps-sorted {
+    color: #10b981;
+    font-weight: 600;
+  }
+
+  .ps-partition {
+    font-size: 0.6rem;
+    font-weight: 500;
+    padding: 0.05rem 0.3rem;
+    border-radius: 9999px;
+    background-color: rgba(6, 182, 212, 0.15);
+    color: var(--color-accent);
+  }
+
+  .ps-arrow-down {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0.25rem 0;
+  }
+
+  .ps-arrow-label {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.6rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-accent);
+    font-weight: 600;
+  }
+
+  .ps-after {
+    display: flex;
+    justify-content: center;
+    gap: 1rem;
+  }
+
+  /* Plan tree (step 4) */
+  .pt-branches {
+    display: flex;
+    justify-content: center;
+    height: 2rem;
+  }
+
+  .pt-lines {
+    width: 60%;
+    max-width: 16rem;
+  }
+
+  /* Execution (step 5) */
+  .ex-streams {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .ex-stream {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .ex-stream-label {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.65rem;
+    font-weight: 600;
+    padding: 0.1rem 0.35rem;
+    border-radius: 9999px;
+    background-color: rgba(6, 182, 212, 0.15);
+    color: var(--color-accent);
+    flex-shrink: 0;
+  }
+
+  .ex-seek {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.75rem;
+    color: var(--color-text-secondary);
+    background: transparent;
+    padding: 0;
+    flex-shrink: 0;
+  }
+
+  .ex-flow-arrow {
+    color: var(--color-text-muted);
+    flex-shrink: 0;
+  }
+
+  .ex-stream-bar {
+    flex: 1;
+    height: 4px;
+    border-radius: 2px;
+    background: linear-gradient(90deg, var(--color-accent), transparent);
+  }
+
+  .ex-merge-arrow {
+    display: flex;
+    justify-content: center;
+    padding: 0.5rem 0 0.25rem;
+  }
+
+  .ex-result {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #10b981;
+    border-radius: 0.375rem;
+    background-color: rgba(16, 185, 129, 0.05);
+  }
+
+  .ex-result-label {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #10b981;
+  }
+
+  .ex-result-badge {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.65rem;
+    color: var(--color-text-muted);
+  }
+</style>
+
+<script>
+  const container = document.querySelector(".query-lifecycle");
+  if (container) {
+    const buttons = container.querySelectorAll<HTMLButtonElement>(".ql-step-btn");
+    const panels = container.querySelectorAll<HTMLElement>(".ql-panel");
+    const progressBar = container.querySelector<HTMLElement>(".ql-progress-bar");
+    const stepsContainer = container.querySelector<HTMLElement>(".ql-steps");
+    let currentStep = 0;
+
+    function updateProgressBar() {
+      if (!progressBar || !stepsContainer) return;
+      const btn = buttons[currentStep];
+      const containerRect = stepsContainer.getBoundingClientRect();
+      const btnRect = btn.getBoundingClientRect();
+      // Right edge of active button relative to the visible container
+      const rightEdge = btnRect.right - containerRect.left;
+      const visibleWidth = containerRect.width;
+      // Clamp to 0-100%
+      const pct = Math.max(0, Math.min(100, (rightEdge / visibleWidth) * 100));
+      progressBar.style.width = `${pct}%`;
+    }
+
+    // Update on scroll so the bar tracks the button's visual position
+    stepsContainer?.addEventListener("scroll", updateProgressBar);
+
+    buttons.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const step = Number(btn.dataset.step);
+        const goingForward = step > currentStep;
+        currentStep = step;
+
+        buttons.forEach((b) => b.classList.remove("active"));
+        panels.forEach((p) => p.classList.remove("active"));
+
+        btn.classList.add("active");
+
+        // Scroll neighbors into view for both directions
+        const neighbor = goingForward ? buttons[step + 1] : buttons[step - 1];
+        if (neighbor) {
+          neighbor.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+        } else {
+          btn.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+        }
+
+        const panel = container.querySelector<HTMLElement>(`[data-panel="${step}"]`);
+        if (panel) panel.classList.add("active");
+
+        updateProgressBar();
+      });
+    });
+
+    // Set initial progress bar position
+    updateProgressBar();
+  }
+</script>

@@ -99,6 +99,58 @@
   }
 }
 
+/* Code blocks — Shiki dual theme support for .dark class toggle */
+.dark .astro-code,
+.dark .astro-code span {
+  color: var(--shiki-dark) !important;
+  background-color: var(--shiki-dark-bg) !important;
+}
+
+.prose :where(pre) {
+  position: relative;
+  border: 1px solid var(--color-border);
+  border-radius: 0.5rem;
+}
+
+.prose :where(pre code) {
+  background-color: transparent;
+}
+
+/* Language label on code blocks */
+.code-label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 0.1rem 0.5rem;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+  background-color: var(--color-surface-hover);
+  border-bottom-left-radius: 0.375rem;
+  border-top-right-radius: calc(0.5rem - 1px);
+  border-left: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
+  user-select: none;
+  pointer-events: none;
+}
+
+.code-label-icon {
+  width: 0.7rem;
+  height: 0.7rem;
+  flex-shrink: 0;
+  display: block;
+}
+
+.code-label-icon.code-label-icon-rust {
+  position: relative;
+  top: -0.5px;
+}
+
 /* Scroll reveal */
 .fade-up {
   opacity: 0;
