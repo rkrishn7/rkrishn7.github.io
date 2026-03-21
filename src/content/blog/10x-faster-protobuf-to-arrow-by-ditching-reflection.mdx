@@ -9,13 +9,13 @@ At [Massive](https://massive.com), our streaming data engine — built on [Apach
 
 The fix was conceptually simple — replace runtime reflection with compile-time code generation — and the result was roughly a **10x throughput improvement** with significantly lower resource usage. But the interesting part isn't the fix itself. It's *why* the original approach was so expensive, and how the abstraction that made the system flexible became the bottleneck that nearly broke it.
 
-## A Flamegraph Worth a Thousand Words
+## Let the Profile Lead
 
-I was load-testing our options quotes pipeline — the kind of workload where OPRA pushes millions of quote updates per second across thousands of tickers. The test simulated 10,000 distinct groups over ~1GB of data (~20 million messages). I expected the bottleneck to be somewhere in the SQL layer, or maybe Kafka consumption. Instead, the flamegraph pointed squarely at one place: `DynamicMessage::decode`.
+I was load-testing our options quotes pipeline — the kind of workload where OPRA pushes millions of quote updates per second across thousands of tickers. The test simulated 10,000 distinct groups over ~1GB of data (~20 million messages). I expected the bottleneck to be somewhere in the execution layer, but the flamegraph pointed squarely at one place: `DynamicMessage::decode`.
 
 **Throughput topped out at ~200k msgs/sec.** The system was CPU-bound on *parsing*, not on the actual data processing.
 
-To understand why, you need to see how the decoding pipeline works.
+To understand why, let's dive into how the decoding pipeline works.
 
 ## How We Got Here
 
@@ -36,7 +36,7 @@ CREATE SOURCE opra_quotes (
 );
 ```
 
-The protobuf codec loads a compiled `.pb` descriptor file at runtime, then uses [prost-reflect](https://docs.rs/prost-reflect)'s `DynamicMessage` to decode arbitrary protobuf messages without needing generated Rust types. This is incredibly flexible — add a new protobuf schema and it just works, no recompilation needed.
+Notice that the SQL schema is decoupled from the protobuf definition — the user declares which fields and types they want as Arrow columns, and the codec layer bridges the gap. The protobuf codec loads a compiled `.pb` descriptor file at runtime, then uses [prost-reflect](https://docs.rs/prost-reflect)'s `DynamicMessage` to decode arbitrary protobuf messages without needing generated Rust types. This is a common pattern in SQL-based stream processors — systems like [RisingWave](https://risingwave.com/) use the same approach for the same reason: it lets users work with any protobuf schema without recompilation.
 
 The decoding path looked something like this:
 
@@ -85,7 +85,9 @@ The common thread: every one of these operations answers a question whose answer
 
 For any given dataflow, the protobuf schema is fixed at deploy time. We know exactly which message type we're decoding, which fields it has, and what Arrow types they map to. So what if we just... told the compiler?
 
-We introduced a `DecoderFactory` trait and a `Custom` encoding variant that lets you register statically-typed decoders:
+In a monolithic streaming database, you'd be stuck. The decoding pipeline is an internal implementation detail — you can't swap it out without forking the project. But `atlas-flow` is a library, not a standalone system. It's designed to be embedded, and its codec layer is one of several extension points exposed to the host application. So adding a custom decoding path means implementing a trait and registering it — not patching framework internals.
+
+We introduced a `DecoderFactory` trait and a `Custom` encoding variant that lets the host application register statically-typed decoders:
 
 ```rust
 ctx.register_encoding(
@@ -156,7 +158,7 @@ Every source of overhead from the dynamic path is gone:
 | Descriptor clone per message          | No descriptors at runtime           |
 | Presence/cardinality checks per field | Compile-time known structure        |
 
-The `prost::Message` derive macro generates a `decode` implementation that knows the exact wire format at compile time. It matches on tag numbers directly — no hash tables, no string comparisons, no dynamic dispatch. The generated code is essentially a hand-optimized state machine over the protobuf wire format.
+The `prost::Message` derive macro generates a `decode` implementation that knows the exact wire format at compile time. It matches on tag numbers directly — no hash tables, no string comparisons, no dynamic dispatch. The generated code is essentially a hand-optimized state machine over the protobuf wire format. And with concrete builder types instead of `Box<dyn ArrayBuilder>`, the compiler can inline the append calls — eliminating the vtable indirection that, in a hot loop processing millions of items per second, quietly compounds into a real bottleneck.
 
 ## 200k to 2M
 
@@ -170,10 +172,8 @@ This isn't a synthetic micro-benchmark. It's the actual workload shape we see fo
 
 The obvious cost is that custom decoders must be written and maintained per message type. When the protobuf schema changes, the decoder needs updating too. More code, tightly coupled to the schema.
 
-But the schemas that need this are the high-throughput ones — and there aren't many. The long tail of low-volume message types continues using the dynamic decoder, where flexibility matters more than raw speed. Both paths coexist; the encoding name in the SQL declaration is all that determines which one runs. A registry of `DecoderFactory` implementations keeps the core engine decoupled from any specific protobuf schema.
+But the schemas that need this are the high-throughput ones — and there aren't many. The long tail of low-volume message types continues using the dynamic decoder, where flexibility matters more than raw speed. Both paths coexist; the encoding name in the SQL declaration is all that determines which one runs.
 
-The dynamic decoder was a reasonable first design. It minimized code, maximized flexibility, and worked fine at moderate throughput. The problem only surfaced at scale — which is exactly when you want to discover it, because it means you haven't wasted effort optimizing message types that don't need it.
+This is where the library design pays off. The `DecoderFactory` trait isn't a special-case escape hatch — it's the same interface the built-in protobuf and JSON codecs implement. Custom decoders are first-class citizens, registered with the execution context alongside everything else. The framework doesn't need to know or care what `custom.proto+stocks.QuoteNBBO` does internally; it just calls `create_decoder` and gets back something that produces `RecordBatch`es. The optimization lives entirely in user code, outside the framework boundary, which means it doesn't add complexity to the core engine and can evolve independently of it.
 
-**Generics are free; trait objects are not.** Rust's monomorphization means generic code compiles down to the same machine code you'd write by hand. But the moment you put something behind `Box<dyn Trait>`, you've opted into vtable dispatch, lost inlining, and often introduced heap allocation. In a hot loop processing millions of items per second, that gap matters.
-
-And more broadly: the fastest code is the code that doesn't exist at runtime. The static decoder doesn't do the same work *faster* — it simply never has to ask the questions in the first place.
+In an opaque streaming database, hitting this same `prost-reflect` bottleneck would mean either contributing an optimization upstream or accepting the throughput ceiling. Here, it was an afternoon of work in our application layer — no framework changes required.
