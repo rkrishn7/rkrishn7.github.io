@@ -206,12 +206,10 @@ Putting it all together, here's the lifecycle of a query that hits this optimiza
 
 <QueryLifecycle />
 
-## Takeaways
+## Closing Thoughts
 
-A few things I found interesting about this work:
+If there's a throughline here, it's that the boundary between your system and the query framework is where a lot of performance lives — and dies. DataFusion's optimizer is sophisticated, but it operates on a contract: the properties your `ExecutionPlan` reports are the *only* truth it has. Report your ordering wrong, and it inserts a sort. Forget to mark a column as constant, and it can't eliminate that column from the sort requirement. The framework doesn't know your storage layout. You have to bridge that gap.
 
-**The optimizer only knows what you tell it.** DataFusion is remarkably capable, but its optimizations are gated on the properties your `ExecutionPlan` reports. If your custom plan doesn't accurately describe its ordering, partitioning, and equivalence properties, you leave performance on the table. The fix here wasn't a new algorithm — it was giving the optimizer the information it needed to apply an optimization it already had.
+What made this optimization work wasn't a new algorithm. It was recognizing that the information DataFusion needed to do the right thing was already latent in our filter predicates — we just weren't surfacing it. The data was already sorted within each channel value in the key space — we just had to structure the plan in a way that made that visible to the optimizer, and then update the cost model so it could reason about the same decomposition when choosing a table.
 
-**Cost models need to mirror physical reality.** The partition splitting would have been useless if the cost model didn't route queries to tables that supported it. Keeping the cost model in sync with the execution layer's capabilities is just as important as the optimization itself.
-
-**Small changes, big impact.** The core detection logic is ~40 lines of code. The partition filter rewriting is another ~20. But the downstream effect — eliminating a full sort on potentially millions of rows — is significant. Sometimes the highest-leverage work is at the boundary between your system and the framework it sits on.
+The actual code change is small — fewer than 150 lines of detection and filter rewriting. But it sits at exactly the right leverage point: a thin layer of translation between what our storage engine guarantees and what the optimizer needs to hear. If you're building on top of DataFusion (or any extensible query framework), that translation layer is worth investing in. The best optimization is often the one the framework already has — you just need to unlock it.
