@@ -9,15 +9,17 @@ At [Massive](https://massive.com), our streaming data engine — built on [Apach
 
 The fix was conceptually simple — replace runtime reflection with compile-time code generation — and the result was roughly a **10x throughput improvement** with significantly lower resource usage. But the interesting part isn't the fix itself. It's *why* the original approach was so expensive, and how the abstraction that made the system flexible became the bottleneck that nearly broke it.
 
-## The Architecture
+## A Flamegraph Worth a Thousand Words
 
-Our streaming engine, `atlas-flow`, is a portable dataflow execution framework. Data flows through three stages:
+I was load-testing our options quotes pipeline — the kind of workload where OPRA pushes millions of quote updates per second across thousands of tickers. The test simulated 10,000 distinct groups over ~1GB of data (~20 million messages). I expected the bottleneck to be somewhere in the SQL layer, or maybe Kafka consumption. Instead, the flamegraph pointed squarely at one place: `DynamicMessage::decode`.
 
-1. **Ingest** — Kafka (or WebSocket) sources consume raw bytes
-2. **Decode** — A codec layer converts those bytes into Arrow `RecordBatch`es
-3. **Process** — DataFusion executes SQL transformations over the Arrow data, then writes results to sinks
+**Throughput topped out at ~200k msgs/sec.** The system was CPU-bound on *parsing*, not on the actual data processing.
 
-The codec layer is pluggable. You declare an encoding in SQL when defining a source:
+To understand why, you need to see how the decoding pipeline works.
+
+## How We Got Here
+
+Our streaming engine, `atlas-flow`, has a pluggable codec layer. You declare an encoding in SQL when defining a source:
 
 ```sql
 CREATE SOURCE opra_quotes (
@@ -34,11 +36,9 @@ CREATE SOURCE opra_quotes (
 );
 ```
 
-The protobuf codec loads a compiled `.pb` descriptor file at runtime, then uses [prost-reflect](https://docs.rs/prost-reflect)'s `DynamicMessage` to decode arbitrary protobuf messages without needing generated Rust types. This is incredibly flexible — add a new protobuf schema and it just works, no recompilation needed. But flexibility has a cost.
+The protobuf codec loads a compiled `.pb` descriptor file at runtime, then uses [prost-reflect](https://docs.rs/prost-reflect)'s `DynamicMessage` to decode arbitrary protobuf messages without needing generated Rust types. This is incredibly flexible — add a new protobuf schema and it just works, no recompilation needed.
 
-## The Problem: Death by a Thousand Lookups
-
-Here's a simplified version of what the dynamic decoding path looked like:
+The decoding path looked something like this:
 
 ```rust
 fn append_message(&mut self, bytes: &[u8]) -> Result<()> {
@@ -69,7 +69,9 @@ fn append_message(&mut self, bytes: &[u8]) -> Result<()> {
 }
 ```
 
-Every message — and we're processing millions per second — pays for:
+## Death by a Thousand Lookups
+
+At 200k+ messages per second, each with 12 fields, the per-message costs in that loop add up fast:
 
 1. **Descriptor cloning**: `DynamicMessage::decode` takes ownership of a `MessageDescriptor`, which involves reference-counted interior data. Not free at scale.
 2. **HashMap lookups per field**: `get_field_by_name` does a string-keyed lookup for *every field* of *every message*. For a 12-field message at 2M msgs/sec, that's 24 million hash lookups per second.
@@ -77,27 +79,13 @@ Every message — and we're processing millions per second — pays for:
 4. **Vtable dispatch on builders**: The builders are stored as `Vec<Box<dyn ArrayBuilder>>`, so every `append` call goes through dynamic dispatch. The compiler can't inline anything.
 5. **Presence checks and cardinality metadata**: Each field requires checking `has_field`, `supports_presence`, `is_list`, and `cardinality` — all method calls on the descriptor.
 
-None of these are expensive in isolation. But multiply them across millions of messages per second, and they compound into a wall. When I captured a flamegraph under production-like load (~1GB of data, ~20 million messages, 10,000 distinct groups), the profile told the story clearly:
+The common thread: every one of these operations answers a question whose answer is known at compile time. Which fields does this message have? What are their types? How should they map to Arrow? The dynamic decoder asks and re-answers these questions for every single message. Millions of times per second, we're rediscovering facts about a schema that hasn't changed since the binary was built.
 
-**Throughput topped out at ~200k msgs/sec**, with the vast majority of CPU time spent inside `DynamicMessage::decode` and the field extraction loop. The system was CPU-bound on *parsing*, not on the actual data processing.
+## Compile-Time Answers to Runtime Questions
 
-## The Fix: Static Decoding
+For any given dataflow, the protobuf schema is fixed at deploy time. We know exactly which message type we're decoding, which fields it has, and what Arrow types they map to. So what if we just... told the compiler?
 
-The key insight is that for any given dataflow, the protobuf schema is fixed at deploy time. We know exactly which message type we're decoding, which fields it has, and what Arrow types they map to. All that runtime flexibility is wasted — we're paying for dynamism we don't need.
-
-The fix introduces a `DecoderFactory` trait and a `Custom` encoding variant:
-
-```rust
-pub trait DecoderFactory: Send + Sync {
-    fn create_decoder(
-        &self,
-        schema: SchemaRef,
-        batch_size: usize,
-    ) -> Result<Box<dyn Decoder>>;
-}
-```
-
-Custom decoders are registered by name with the execution context:
+We introduced a `DecoderFactory` trait and a `Custom` encoding variant that lets you register statically-typed decoders:
 
 ```rust
 ctx.register_encoding(
@@ -107,7 +95,7 @@ ctx.register_encoding(
 )?;
 ```
 
-And referenced in SQL:
+Referenced in SQL with a single line change:
 
 ```sql
 CREATE SOURCE opra_quotes (...) WITH (
@@ -116,7 +104,7 @@ CREATE SOURCE opra_quotes (...) WITH (
 );
 ```
 
-The custom decoder looks radically different from the dynamic one:
+The custom decoder uses `prost::Message` (the derive macro, not the reflection API) and concrete Arrow builder types:
 
 ```rust
 pub struct StocksQuoteNbboDecoder {
@@ -158,7 +146,7 @@ impl StocksQuoteNbboDecoder {
 }
 ```
 
-Every source of overhead from the dynamic path is eliminated:
+Every source of overhead from the dynamic path is gone:
 
 | Dynamic (`DynamicMessage`)            | Static (`prost::Message`)           |
 |---------------------------------------|-------------------------------------|
@@ -170,26 +158,22 @@ Every source of overhead from the dynamic path is eliminated:
 
 The `prost::Message` derive macro generates a `decode` implementation that knows the exact wire format at compile time. It matches on tag numbers directly — no hash tables, no string comparisons, no dynamic dispatch. The generated code is essentially a hand-optimized state machine over the protobuf wire format.
 
-## The Result
+## 200k to 2M
 
-Same benchmark: ~1GB of data, ~20 million messages, 10,000 distinct groups.
+Same benchmark — ~1GB of data, ~20 million messages, 10,000 distinct groups — now with the static decoder:
 
-**Throughput jumped from ~200k msgs/sec to roughly 2M msgs/sec** — an order of magnitude improvement. CPU utilization during the run dropped dramatically, and the time to churn through the full dataset fell from minutes to seconds.
+**Throughput jumped from ~200k msgs/sec to roughly 2M msgs/sec.** CPU utilization during the run dropped dramatically, and the time to churn through the full dataset fell from minutes to seconds.
 
-This isn't a synthetic micro-benchmark; it's the actual workload shape we see in production for high-throughput feeds like US options quotes (OPRA), which generate millions of quote updates per second across thousands of tickers. At 200k msgs/sec, we couldn't keep up with the feed. At 2M msgs/sec, we have headroom.
+This isn't a synthetic micro-benchmark. It's the actual workload shape we see for US options quotes (OPRA), which generate millions of quote updates per second across thousands of tickers. At 200k msgs/sec, we couldn't keep up with the feed. At 2M msgs/sec, we have headroom.
 
-## The Tradeoff
+## Living With Both
 
-The obvious cost is that custom decoders must be written and maintained for each message type. When the protobuf schema changes, the decoder needs updating too. It's more code, and it's code that's tightly coupled to the schema.
+The obvious cost is that custom decoders must be written and maintained per message type. When the protobuf schema changes, the decoder needs updating too. More code, tightly coupled to the schema.
 
-But in practice, the schemas that need this optimization are the high-throughput ones — and there aren't that many of them. The long tail of low-volume message types can continue using the dynamic decoder, where flexibility matters more than raw speed. The system supports both simultaneously; the encoding name in the SQL declaration is all that determines which path is used.
+But the schemas that need this are the high-throughput ones — and there aren't many. The long tail of low-volume message types continues using the dynamic decoder, where flexibility matters more than raw speed. Both paths coexist; the encoding name in the SQL declaration is all that determines which one runs. A registry of `DecoderFactory` implementations keeps the core engine decoupled from any specific protobuf schema.
 
-We also keep the `DecoderFactory` trait generic enough that new custom decoders can be added without modifying the framework. It's a registry, not a hardcoded switch — so the core engine stays decoupled from any specific protobuf schema.
-
-## Takeaways
-
-**Profile before you abstract.** The dynamic decoder was a reasonable first design — it minimized code, maximized flexibility, and worked fine at moderate throughput. The problem only surfaced at scale. If we'd prematurely optimized, we'd have written custom decoders for message types that didn't need them.
+The dynamic decoder was a reasonable first design. It minimized code, maximized flexibility, and worked fine at moderate throughput. The problem only surfaced at scale — which is exactly when you want to discover it, because it means you haven't wasted effort optimizing message types that don't need it.
 
 **Generics are free; trait objects are not.** Rust's monomorphization means generic code compiles down to the same machine code you'd write by hand. But the moment you put something behind `Box<dyn Trait>`, you've opted into vtable dispatch, lost inlining, and often introduced heap allocation. In a hot loop processing millions of items per second, that gap matters.
 
-**The fastest code is the code that doesn't exist at runtime.** Every HashMap lookup, every enum match, every vtable dispatch in the dynamic path was doing work to answer a question whose answer was known at compile time. The static decoder doesn't *skip* those steps more efficiently — it simply never has to ask the questions in the first place.
+And more broadly: the fastest code is the code that doesn't exist at runtime. The static decoder doesn't do the same work *faster* — it simply never has to ask the questions in the first place.
