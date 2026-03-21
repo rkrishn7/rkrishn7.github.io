@@ -5,6 +5,8 @@ date: 2026-03-21
 tags: ["rust", "query-optimization", "datafusion"]
 ---
 
+import QueryLifecycle from "../../components/QueryLifecycle.astro";
+
 At [Massive](https://massive.com), we serve real-time financial market data at high throughput and low latency. Our live execution engine ingests millions of records per second from upstream feeds and serves them to users within milliseconds. The query layer is built on [Apache DataFusion](https://datafusion.apache.org/), which gives us a powerful optimizer — but its optimizations are only as good as the properties our execution plans report.
 
 Recently, I ran into a case where DataFusion couldn't prove that our data was sorted, even though it was — and the fallback was an expensive full `SortExec`. This post walks through the problem, the fix, and the cost model update that tied it all together.
@@ -200,33 +202,9 @@ Without this update, the cost model would undervalue tables that benefit from IN
 
 ## The Full Picture
 
-Putting it all together, here's the lifecycle of a query that hits this optimization:
+Putting it all together, here's the lifecycle of a query that hits this optimization. Click through each stage:
 
-```
-1. Query arrives:
-   WHERE ticker = 'ESH6' AND channel IN (360, 415)
-   ORDER BY timestamp DESC LIMIT 100
-
-2. View matching (cost model):
-   → Recognizes ticker as constant prefix column
-   → Recognizes channel as constant (IN-list partitioning aware)
-   → Routes to table with sort order [ticker, channel, timestamp, seq]
-
-3. Plan construction (RocksExec):
-   → Detects IN-list on channel (sort prefix, predecessors constant)
-   → Splits into 2 partitions: channel=360, channel=415
-   → Each partition reports ordering: [timestamp DESC, seq DESC]
-
-4. DataFusion optimization:
-   → Sees 2 sorted partitions
-   → Inserts SortPreservingMergeExec instead of SortExec
-   → Pushes LIMIT into the merge
-
-5. Execution:
-   → Each partition scans its narrowed key range in RocksDB
-   → Streaming merge produces globally sorted output
-   → Stops after 100 rows — minimal I/O, no buffering
-```
+<QueryLifecycle />
 
 ## Takeaways
 

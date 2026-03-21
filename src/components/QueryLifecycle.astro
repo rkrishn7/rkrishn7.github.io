@@ -1,0 +1,277 @@
+---
+import { Code } from "astro:components";
+
+const steps = [
+  {
+    label: "Query Arrives",
+    description: "A query hits the system with an IN-list filter on a sort-prefix column.",
+    sql: `SELECT * FROM live_trades
+WHERE ticker = 'ESH6'
+  AND channel IN (360, 415)
+ORDER BY timestamp DESC
+LIMIT 100`,
+  },
+  {
+    label: "View Matching",
+    description: "The cost model recognizes both ticker and channel as constant prefix columns — thanks to IN-list partitioning awareness — and routes to the optimal table.",
+    diagram: `cost model
+  ticker = 'ESH6'   --> constant
+  channel IN (360, 415) --> constant (IN-list aware)
+  sort order: [ticker, channel, timestamp, seq]
+  --> best match`,
+  },
+  {
+    label: "Plan Construction",
+    description: "RocksExec detects the IN-list on a sort-prefix column with constant predecessors, and splits into one partition per value.",
+    diagram: `RocksExec (single)
+  channel IN (360, 415)
+        |
+        v
+RocksExec (partition 0)    RocksExec (partition 1)
+  channel = 360              channel = 415
+  ordering: [ts, seq]        ordering: [ts, seq]`,
+  },
+  {
+    label: "DataFusion Optimization",
+    description: "DataFusion sees two independently sorted partitions and inserts a SortPreservingMergeExec — a streaming k-way merge — instead of a full SortExec.",
+    diagram: `  SortPreservingMergeExec
+     (timestamp DESC)
+       /           \\
+RocksExec       RocksExec
+ch = 360        ch = 415
+(sorted)        (sorted)`,
+  },
+  {
+    label: "Execution",
+    description: "Each partition scans only its narrowed key range in RocksDB. The streaming merge produces globally sorted output and stops after 100 rows — minimal I/O, no buffering.",
+    diagram: `partition 0: seek(ESH6|360|...) --> stream
+partition 1: seek(ESH6|415|...) --> stream
+                    \\       /
+                  merge (top 100)
+                       |
+                    result`,
+  },
+];
+---
+
+<div class="query-lifecycle">
+  <div class="ql-steps">
+    {steps.map((step, i) => (
+      <button
+        class={`ql-step-btn ${i === 0 ? "active" : ""}`}
+        data-step={i}
+      >
+        <span class="ql-step-num">{i + 1}</span>
+        <span class="ql-step-label">{step.label}</span>
+      </button>
+    ))}
+  </div>
+  <div class="ql-progress-track">
+    <div class="ql-progress-bar" style="width: 20%"></div>
+  </div>
+  <div class="ql-panels">
+    {steps.map((step, i) => (
+      <div class={`ql-panel ${i === 0 ? "active" : ""}`} data-panel={i}>
+        <p class="ql-description">{step.description}</p>
+        {step.sql && (
+          <div class="ql-code-wrap">
+            <Code code={step.sql} lang="sql" themes={{ light: "github-light", dark: "tokyo-night" }} />
+          </div>
+        )}
+        {step.diagram && (
+          <pre class="ql-diagram"><code>{step.diagram}</code></pre>
+        )}
+      </div>
+    ))}
+  </div>
+</div>
+
+<style>
+  .query-lifecycle {
+    margin: 2rem 0;
+    border: 1px solid var(--color-border);
+    border-radius: 0.75rem;
+    overflow: hidden;
+    background-color: var(--color-surface);
+  }
+
+  .ql-steps {
+    display: flex;
+    gap: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .ql-steps::-webkit-scrollbar {
+    display: none;
+  }
+
+  .ql-progress-track {
+    height: 2px;
+    background-color: var(--color-border);
+  }
+
+  .ql-progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #06b6d4, #10b981);
+  }
+
+  .ql-step-btn {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    border: none;
+    background: transparent;
+    color: var(--color-text-muted);
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: color 0.2s, background-color 0.2s;
+    white-space: nowrap;
+  }
+
+  .ql-step-btn:hover {
+    color: var(--color-text);
+    background-color: var(--color-surface-hover);
+  }
+
+  .ql-step-btn.active {
+    color: var(--color-accent);
+  }
+
+  .ql-step-num {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.25rem;
+    height: 1.25rem;
+    border-radius: 50%;
+    font-size: 0.65rem;
+    font-weight: 600;
+    background-color: var(--color-border);
+    color: var(--color-text-muted);
+    flex-shrink: 0;
+    transition: background-color 0.2s, color 0.2s;
+  }
+
+  .ql-step-btn.active .ql-step-num {
+    background-color: var(--color-accent);
+    color: #fff;
+  }
+
+  .ql-panels {
+    padding: 1.25rem 1.5rem;
+    min-height: 10rem;
+  }
+
+  .ql-panel {
+    display: none;
+    animation: ql-fade-in 0.3s ease;
+  }
+
+  .ql-panel.active {
+    display: block;
+  }
+
+  @keyframes ql-fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .ql-description {
+    margin: 0 0 1rem 0;
+    color: var(--color-text-secondary);
+    font-size: 0.9rem;
+    line-height: 1.6;
+  }
+
+  .ql-code-wrap :global(pre) {
+    margin: 0;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--color-border);
+    font-size: 0.8rem;
+    line-height: 1.5;
+  }
+
+  .ql-diagram {
+    margin: 0;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    background-color: var(--color-bg);
+    border: 1px solid var(--color-border);
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.8rem;
+    line-height: 1.5;
+    overflow-x: auto;
+    color: var(--color-text);
+  }
+
+  .ql-diagram code {
+    background: transparent;
+    padding: 0;
+  }
+</style>
+
+<script>
+  const container = document.querySelector(".query-lifecycle");
+  if (container) {
+    const buttons = container.querySelectorAll<HTMLButtonElement>(".ql-step-btn");
+    const panels = container.querySelectorAll<HTMLElement>(".ql-panel");
+    const progressBar = container.querySelector<HTMLElement>(".ql-progress-bar");
+    const stepsContainer = container.querySelector<HTMLElement>(".ql-steps");
+    let currentStep = 0;
+
+    function updateProgressBar() {
+      if (!progressBar || !stepsContainer) return;
+      const btn = buttons[currentStep];
+      const containerRect = stepsContainer.getBoundingClientRect();
+      const btnRect = btn.getBoundingClientRect();
+      // Right edge of active button relative to the visible container
+      const rightEdge = btnRect.right - containerRect.left;
+      const visibleWidth = containerRect.width;
+      // Clamp to 0-100%
+      const pct = Math.max(0, Math.min(100, (rightEdge / visibleWidth) * 100));
+      progressBar.style.width = `${pct}%`;
+    }
+
+    // Update on scroll so the bar tracks the button's visual position
+    stepsContainer?.addEventListener("scroll", updateProgressBar);
+
+    buttons.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const step = Number(btn.dataset.step);
+        const goingForward = step > currentStep;
+        currentStep = step;
+
+        buttons.forEach((b) => b.classList.remove("active"));
+        panels.forEach((p) => p.classList.remove("active"));
+
+        btn.classList.add("active");
+
+        // Scroll neighbors into view for both directions
+        const neighbor = goingForward ? buttons[step + 1] : buttons[step - 1];
+        if (neighbor) {
+          neighbor.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+        } else {
+          btn.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+        }
+
+        const panel = container.querySelector<HTMLElement>(`[data-panel="${step}"]`);
+        if (panel) panel.classList.add("active");
+
+        updateProgressBar();
+      });
+    });
+
+    // Set initial progress bar position
+    updateProgressBar();
+  }
+</script>
