@@ -1,6 +1,7 @@
 ---
 interface Props {
   title: string;
+  event: string;
   date: Date;
   description?: string;
   slug: string;
@@ -8,7 +9,7 @@ interface Props {
   style?: string;
 }
 
-const { title, date, description, slug, tags, style } = Astro.props;
+const { title, event, date, description, slug, tags, style } = Astro.props;
 const formattedDate = date.toLocaleDateString("en-US", {
   year: "numeric",
   month: "short",
@@ -16,13 +17,16 @@ const formattedDate = date.toLocaleDateString("en-US", {
 });
 ---
 
-<a href={`/blog/${slug}`} class="block group" style={style}>
+<a href={`/talks/${slug}`} class="block group" style={style}>
   <article class="relative p-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] glow-hover overflow-hidden transition-all duration-300 hover:border-[var(--color-border-active)]">
     <div class="absolute left-0 top-0 bottom-0 w-[3px] bg-gradient-to-b from-[#06b6d4] to-[#10b981] opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
     <div class="flex items-baseline justify-between gap-4">
-      <h3 class="font-medium text-[var(--color-text)] group-hover:text-[var(--color-accent)] transition-colors">
-        {title}
-      </h3>
+      <div class="flex items-baseline gap-2 min-w-0">
+        <span class="text-[var(--color-text-muted)] text-xs shrink-0">▶</span>
+        <h3 class="font-medium text-[var(--color-text)] group-hover:text-[var(--color-accent)] transition-colors">
+          <span set:html={title} />
+        </h3>
+      </div>
       <time
         datetime={date.toISOString()}
         class="text-sm font-mono text-[var(--color-text-muted)] shrink-0"
@@ -30,6 +34,7 @@ const formattedDate = date.toLocaleDateString("en-US", {
         {formattedDate}
       </time>
     </div>
+    <p class="mt-1 text-sm font-mono text-[var(--color-accent)]">{event}</p>
     {description && (
       <p class="mt-2 text-sm text-[var(--color-text-secondary)]">{description}</p>
     )}

@@ -2,15 +2,24 @@
 import BaseLayout from "../layouts/BaseLayout.astro";
 ---
 
-<BaseLayout title="Not Found | rohank">
+<BaseLayout title="Not Found | @rkrishn7">
   <div class="text-center py-20">
-    <h1 class="text-6xl font-bold mb-4">404</h1>
-    <p class="text-slate-600 dark:text-slate-400 mb-8">Page not found.</p>
+    <h1 class="text-7xl font-bold font-mono bg-gradient-to-r from-[#06b6d4] to-[#10b981] bg-clip-text text-transparent mb-8">
+      404
+    </h1>
+    <div class="font-mono text-sm text-[var(--color-text-muted)] space-y-2 mb-8">
+      <p>
+        <span class="text-[var(--color-accent)]">$</span> curl rohank.me/...
+      </p>
+      <p class="text-red-400">
+        error: page not found
+      </p>
+    </div>
     <a
       href="/"
-      class="text-blue-600 dark:text-blue-400 hover:underline"
+      class="inline-flex items-center gap-1 font-mono text-sm text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] transition-colors"
     >
-      Go home
+      cd ~<span class="inline-block w-[2px] h-[1em] bg-[var(--color-accent)] ml-0.5 animate-[blink_1s_step-end_infinite]"></span>
     </a>
   </div>
 </BaseLayout>

@@ -1,30 +1,49 @@
 ---
 const navLinks = [
   { href: "/blog", label: "Blog" },
+  { href: "/talks", label: "Talks" },
   { href: "/about", label: "About" },
 ];
+
+const currentPath = Astro.url.pathname;
 ---
 
-<header class="border-b border-slate-200 dark:border-slate-700">
-  <nav class="max-w-2xl mx-auto px-4 py-4 flex items-center justify-between">
-    <a href="/" class="text-lg font-bold hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
-      rohank
+<header class="sticky top-[3px] z-50 border-b border-[var(--color-border)] bg-[var(--color-bg)]/80 backdrop-blur-md">
+  <nav class="max-w-3xl mx-auto px-4 py-4 flex items-center justify-between">
+    <a
+      href="/"
+      class="text-lg font-bold font-mono bg-gradient-to-r from-[#06b6d4] to-[#10b981] bg-clip-text text-transparent"
+    >
+      @rkrishn7
     </a>
     <div class="flex items-center gap-6">
       {
-        navLinks.map(({ href, label }) => (
-          <a
-            href={href}
-            class="text-sm text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
-          >
-            {label}
-          </a>
-        ))
+        navLinks.map(({ href, label }) => {
+          const isActive = currentPath === href || currentPath.startsWith(href + "/");
+          return (
+            <a
+              href={href}
+              aria-current={isActive ? "page" : undefined}
+              class:list={[
+                "text-sm font-mono transition-colors relative",
+                isActive
+                  ? "text-[var(--color-accent)]"
+                  : "text-[var(--color-text-secondary)] hover:text-[var(--color-accent)]",
+              ]}
+            >
+              {label}
+              {isActive && (
+                <span class="absolute -bottom-1 left-0 right-0 h-0.5 bg-gradient-to-r from-[#06b6d4] to-[#10b981]" />
+              )}
+              <span class="absolute -bottom-1 left-0 right-0 h-0.5 bg-gradient-to-r from-[#06b6d4] to-[#10b981] scale-x-0 hover:scale-x-100 transition-transform origin-left" />
+            </a>
+          );
+        })
       }
       <button
         id="theme-toggle"
         aria-label="Toggle dark mode"
-        class="p-1 text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+        class="p-1.5 rounded-md text-[var(--color-text-secondary)] hover:text-[var(--color-accent)] hover:bg-[var(--color-surface)] transition-colors"
       >
         <svg id="sun-icon" class="w-5 h-5 hidden dark:block" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <circle cx="12" cy="12" r="5" />
