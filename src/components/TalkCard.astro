@@ -20,7 +20,7 @@ const formattedDate = date.toLocaleDateString("en-US", {
 <a href={`/talks/${slug}`} class="block group" style={style}>
   <article class="relative p-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] glow-hover overflow-hidden transition-all duration-300 hover:border-[var(--color-border-active)]">
     <div class="absolute left-0 top-0 bottom-0 w-[3px] bg-gradient-to-b from-[#06b6d4] to-[#10b981] opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-    <div class="flex items-baseline justify-between gap-4">
+    <div class="flex flex-col sm:flex-row sm:items-baseline sm:justify-between gap-1 sm:gap-4">
       <div class="flex items-baseline gap-2 min-w-0">
         <span class="text-[var(--color-text-muted)] text-xs shrink-0">▶</span>
         <h3 class="font-medium text-[var(--color-text)] group-hover:text-[var(--color-accent)] transition-colors">
@@ -29,7 +29,7 @@ const formattedDate = date.toLocaleDateString("en-US", {
       </div>
       <time
         datetime={date.toISOString()}
-        class="text-sm font-mono text-[var(--color-text-muted)] shrink-0"
+        class="text-sm font-mono text-[var(--color-text-muted)] shrink-0 pl-5 sm:pl-0"
       >
         {formattedDate}
       </time>
@@ -39,9 +39,9 @@ const formattedDate = date.toLocaleDateString("en-US", {
       <p class="mt-2 text-sm text-[var(--color-text-secondary)]">{description}</p>
     )}
     {tags && tags.length > 0 && (
-      <div class="mt-3 flex gap-2">
+      <div style="display: flex; flex-wrap: nowrap; gap: 0.5rem; overflow-x: auto; scrollbar-width: none; margin-top: 0.75rem;">
         {tags.map((tag) => (
-          <span class="px-2 py-0.5 rounded-full text-xs font-mono bg-[var(--color-accent)]/10 text-[var(--color-accent)] border border-[var(--color-accent)]/20">
+          <span style={`white-space: nowrap; flex-shrink: 0; padding: 0.125rem 0.5rem; border-radius: 9999px; font-size: 0.75rem; font-family: 'JetBrains Mono', ui-monospace, monospace; color: var(--color-accent); background-color: color-mix(in srgb, var(--color-accent) 10%, transparent); border: 1px solid color-mix(in srgb, var(--color-accent) 20%, transparent);`}>
             {tag}
           </span>
         ))}
@@ -49,3 +49,17 @@ const formattedDate = date.toLocaleDateString("en-US", {
     )}
   </article>
 </a>
+
+<style>
+  .tag-badge {
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    white-space: nowrap;
+    flex-shrink: 0;
+    color: var(--color-accent);
+    background-color: color-mix(in srgb, var(--color-accent) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-accent) 20%, transparent);
+  }
+</style>
