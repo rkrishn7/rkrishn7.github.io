@@ -1,0 +1,27 @@
+---
+const links = [
+  { href: "https://github.com/rkrishn7", label: "GitHub" },
+  { href: "https://linkedin.com/in/rkrishn", label: "LinkedIn" },
+  { href: "mailto:rohan@fastmail.us", label: "Email" },
+];
+---
+
+<footer class="border-t border-slate-200 dark:border-slate-700">
+  <div class="max-w-2xl mx-auto px-4 py-6 flex items-center justify-between text-sm text-slate-500 dark:text-slate-400">
+    <span>&copy; {new Date().getFullYear()} Rohan Krishnaswamy</span>
+    <div class="flex gap-4">
+      {
+        links.map(({ href, label }) => (
+          <a
+            href={href}
+            target={href.startsWith("mailto") ? undefined : "_blank"}
+            rel={href.startsWith("mailto") ? undefined : "noopener noreferrer"}
+            class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+          >
+            {label}
+          </a>
+        ))
+      }
+    </div>
+  </div>
+</footer>
