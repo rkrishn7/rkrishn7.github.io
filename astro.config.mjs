@@ -2,11 +2,13 @@ import { defineConfig } from "astro/config";
 import tailwind from "@astrojs/tailwind";
 import sitemap from "@astrojs/sitemap";
 import mdx from "@astrojs/mdx";
+import { remarkReadingTime } from "./remark-reading-time.mjs";
 
 export default defineConfig({
   site: "https://rohank.me",
   integrations: [tailwind(), sitemap(), mdx()],
   markdown: {
+    remarkPlugins: [remarkReadingTime],
     shikiConfig: {
       themes: {
         light: "github-light",
