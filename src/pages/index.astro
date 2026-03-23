@@ -7,7 +7,7 @@ import { getCollection } from "astro:content";
 
 const posts = (await getCollection("blog", ({ data }) => !data.draft))
   .sort((a, b) => b.data.date.valueOf() - a.data.date.valueOf())
-  .slice(0, 5);
+  .slice(0, 3);
 
 const featuredTalks = (await getCollection("talks", ({ data }) => data.featured))
   .sort((a, b) => b.data.date.valueOf() - a.data.date.valueOf())
@@ -82,6 +82,12 @@ const featuredTalks = (await getCollection("talks", ({ data }) => data.featured)
     ) : (
       <p class="text-[var(--color-text-muted)]">No posts yet.</p>
     )}
+    <a
+      href="/blog"
+      class="inline-block mt-4 text-sm font-mono text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors"
+    >
+      view all &rarr;
+    </a>
   </section>
 </BaseLayout>
 
