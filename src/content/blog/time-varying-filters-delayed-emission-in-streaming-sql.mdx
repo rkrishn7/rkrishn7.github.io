@@ -1,19 +1,21 @@
 ---
 title: "Time-Varying Filters: Delayed Emission in Streaming SQL"
-description: "How we built watermark-driven temporal filters to delay message emission in our streaming data engine — from SQL semantics to custom optimizer rules to the physical operator."
-date: 2026-03-22
+description: "How I built watermark-driven temporal filters to delay message emission in a DataFusion-based streaming engine — from SQL semantics to custom optimizer rules to the physical operator."
+date: 2026-01-20
 tags: ["stream-processing", "rust", "datafusion", "sql"]
 ---
 
 import TVFOperatorFlow from "../../components/TVFOperatorFlow.astro";
 
-At [Massive](https://massive.com), our streaming engine processes real-time financial market data through SQL-defined dataflows. Sources like Kafka feeds emit millions of records per second, and downstream consumers — dashboards, APIs, alerting systems — expect data within milliseconds. The system is optimized for this: records flow through the pipeline as fast as the source can produce them.
+Streaming systems are optimized for speed. Records arrive from sources like Kafka, flow through a pipeline of operators, and reach downstream consumers — dashboards, APIs, alerting systems — as fast as possible. That's the default, and it's usually what you want.
 
-But not all consumers want data immediately. Some product requirements call for *delayed* emission — a variant of stock aggregates that holds results for 15 minutes before publishing, or a feed that waits until a record's event-time window has definitively closed before releasing it. Traditionally, you'd build a separate buffering service to handle this: consume the stream, hold records in some queue, and re-emit them after the delay. That works, but it's an entirely separate system with its own state management, failure handling, and deployment lifecycle.
+But not all consumers want data immediately. A data provider might serve both real-time and delayed tiers of the same feed — same processing, different emission schedules. Or a pipeline that ingests embargoed data (economic indicators, earnings reports) and processes it ahead of time, but can't publish until the embargo lifts. In both cases, the processing logic is the same — it's the *timing of emission* that changes.
 
-What if you could express delayed emission as a SQL filter?
+The typical solution is a separate buffering service: consume the stream, hold records in some queue, re-emit them after the delay. That works, but it's an entirely separate system with its own state management, failure handling, and deployment lifecycle.
 
-## Time-Varying Filters
+At my day job, I work on a streaming dataflow engine built on [Apache DataFusion](https://datafusion.apache.org/), and this problem came up recently. The question was: could we express delayed emission in SQL? It turns out other streaming systems have explored this idea — [RisingWave](https://docs.risingwave.com/processing/sql/temporal-filters) and [Materialize](https://materialize.com/docs/transform-data/patterns/temporal-filters/) both support what they call *temporal filters*, which use time-based predicates to control when records are emitted. I wanted to bring the same capability to our engine.
+
+## Filtering on Time
 
 Consider this query:
 
@@ -23,15 +25,15 @@ FROM events
 WHERE event_time + INTERVAL '5' SECOND <= WATERMARK_TS()
 ```
 
-At first glance, this looks like a regular filter. But there's something unusual: `WATERMARK_TS()` isn't a constant or a column — it's a reference to the source's *current watermark*, a monotonically advancing timestamp that tracks how far the stream has progressed in event time.
+`WATERMARK_TS()` returns the source's *current watermark* — a monotonically advancing timestamp that tracks how far the stream has progressed in event time. One way to interpret this filter is straightforwardly: evaluate it on each record as it arrives, substituting the current watermark value. But if the watermark is derived from `event_time` — which is common — then at the moment a record arrives, the watermark is roughly at that record's event time. The predicate becomes something like `event_time + 5s <= ~event_time`, which is always false. Every record gets filtered out. Not useful.
 
-The filter predicate says: "only emit a record once the watermark has advanced past that record's event time plus 5 seconds." For a record with `event_time = 10:00:01`, the condition becomes `10:00:06 <= WATERMARK_TS()`. When the record first arrives, the watermark might be at `10:00:03` — the condition is false. But watermarks only move forward. At some point the watermark will reach `10:00:06`, and the condition will become true.
+The more interesting interpretation comes from noticing that watermarks are monotonic. A condition that's false *now* may become true *later*. When a record arrives with `event_time = 10:00:01`, the predicate requires the watermark to reach at least `10:00:06`. It hasn't yet — but it will, once future events push the watermark forward. At that point, the condition holds.
 
-This is the key observation: **a predicate that depends on the watermark is not a static filter — it's a time-varying one.** The filter's truth value changes as time progresses. Instead of evaluating once and discarding records that don't match, the system can *buffer* records and re-evaluate them as the watermark advances. Once the condition holds, the record is released downstream.
+This is the key insight: **a predicate that depends on the watermark is not a static filter — it's a time-varying one.** Its truth value changes as the stream progresses. Instead of evaluating once and discarding, the system can *buffer* records and release them later, once the watermark has advanced far enough.
 
-This concept isn't new to stream processing. Systems like [RisingWave](https://docs.risingwave.com/processing/sql/temporal-filters) and [Materialize](https://materialize.com/docs/transform-data/patterns/temporal-filters/) call them *temporal filters*. What's interesting is the implementation: making this work in a DataFusion-based engine required a custom marker UDF, a dedicated optimizer rule, and a specialized physical operator — each one building on the extensibility points that DataFusion provides.
+Making this work in a DataFusion-based engine required a custom marker UDF, a dedicated optimizer rule, and a specialized physical operator — each one building on the extensibility points that DataFusion provides.
 
-## The Marker UDF
+## A Function That Never Runs
 
 `WATERMARK_TS()` is what we call a *marker* UDF. It has no physical implementation — if it ever reaches execution, it throws an error. Its sole purpose is to be recognized and removed by the optimizer. This is a useful pattern: register a function so that users can reference it in SQL, but handle all of its semantics at plan time through rewrite rules.
 
@@ -102,7 +104,7 @@ let disjuncts = split_disjunction(filter.predicate());
 **2. Classify each disjunct.** Within each disjunct, conjuncts (AND-connected expressions) are separated into *static* conditions (no `WATERMARK_TS()` reference) and *time-varying* conditions (contains `WATERMARK_TS()`). The rule enforces two constraints:
 
 - **At most one time-varying condition per conjunction.** Multiple time-varying conditions in the same AND would create ambiguity about what release time to use.
-- **`WATERMARK_TS()` must appear as an upper bound.** Using it as a lower bound (e.g., `WATERMARK_TS() <= event_time`) would mean the condition is true initially and becomes permanently false as the watermark advances — useless in an append-only system.
+- **`WATERMARK_TS()` must appear as an upper bound.** Using it as a lower bound (e.g. `WATERMARK_TS() <= event_time`) would mean the condition is true initially and becomes permanently false as the watermark advances — useless in an append-only system.
 
 ```rust
 for conjunct in split_conjunction(&disjunct) {
@@ -239,6 +241,16 @@ fn compute_output_watermark(
 }
 ```
 
+### Limitations
+
+This implementation is straightforward, but it has sharp edges under certain workloads. The buffer is entirely in-memory — every record waiting for release lives on the heap as a full `RecordBatch`. For a high-throughput stream with a long delay (say, 15 minutes on a feed producing millions of records per second), that's a lot of resident memory. There's no spill-to-disk mechanism; if the buffer outgrows available RAM, the operator will exert memory pressure on the entire process.
+
+Watermark stalls are another concern. If the source goes idle — no new events, no watermark advancement — buffered records sit indefinitely with no way to release them. Our engine supports synthetic watermark advancement during idle periods, which mitigates this, but it's worth calling out as a dependency.
+
+Finally, the buffer's contents are included in checkpoint snapshots (serialized as Arrow IPC). A large buffer means large checkpoints, which increases both snapshot latency and storage costs. For workloads where the buffer is consistently large, this could become the bottleneck in the checkpoint cycle.
+
+For now, this is good enough — the workloads we're targeting have moderate throughput and short delays. But a production-hardened version would likely need managed memory with disk spillover, buffer size limits with backpressure, and incremental checkpointing to avoid serializing the entire buffer on every snapshot.
+
 ## Why Upper-Bound Only?
 
 We require `WATERMARK_TS()` to appear as the *upper bound* of the comparison — that is, the side that the time-varying expression must be less than or equal to. This isn't arbitrary.
@@ -247,10 +259,10 @@ Consider the inverse: `WATERMARK_TS() <= event_time + INTERVAL '5' SECOND`. When
 
 The upper-bound constraint ensures that time-varying conditions always express *"wait until later"* — a predicate that is false now but will become true in the future. This is the only direction that makes sense for buffered, delayed emission.
 
-## Closing Thoughts
+## SQL as a Scheduling Language
 
-The throughline here is similar to what I described in the [IN-list post](/blog/in-lists-dont-have-to-break-your-sort-order): the boundary between your system and the query framework is where the interesting engineering lives. DataFusion provides the optimizer infrastructure, the expression evaluation machinery, and the plan node abstraction. But it doesn't know about watermarks, or that a filter might be time-varying, or that buffering with a `BTreeMap` is the right physical strategy. You have to build that translation layer.
+What I find most interesting about this feature isn't the implementation details — it's what it says about SQL in a streaming context. A `WHERE` clause that references a watermark isn't really filtering. It's a *scheduling directive*: "emit this record when the watermark says it's time." The predicate encodes temporal semantics that the system can reason about, optimize, and execute — all within the existing query lifecycle.
 
-What makes this work cleanly is that DataFusion's extension points — `ScalarUDFImpl` for the marker function, `OptimizerRule` for the rewrite, `UserDefinedLogicalNodeCore` for the plan node — are designed for exactly this kind of addition. The time-varying filter isn't a fork or a patch. It's a new node type that participates in the same plan lifecycle as everything else: optimized by the framework's existing passes, lowered through the same planner, executed alongside standard operators.
+DataFusion's extension points made this practical. `ScalarUDFImpl` for the marker function, `OptimizerRule` for the rewrite, `UserDefinedLogicalNodeCore` for the custom plan node — each one is a well-defined boundary where streaming semantics can be introduced without forking the framework. The time-varying filter participates in the same plan lifecycle as every other node: optimized by the framework's existing passes, lowered through the same planner, executed alongside standard operators.
 
-From a stream processing perspective, the pattern is worth highlighting: **SQL predicates can encode temporal semantics**. A `WHERE` clause that references a watermark isn't just filtering — it's a scheduling directive. "Emit this record when the watermark says it's time." The optimizer's job is to recognize that directive and produce a physical operator that honors it. The result is that delayed emission — something that would normally require a separate buffering system — becomes a one-line SQL change.
+The result is that delayed emission — something that would normally require a separate buffering system — becomes a one-line SQL change. The implementation has rough edges, but the abstraction is right: teach the optimizer what a watermark predicate means, and the rest follows from machinery that already exists.

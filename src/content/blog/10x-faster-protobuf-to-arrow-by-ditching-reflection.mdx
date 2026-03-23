@@ -2,7 +2,7 @@
 title: "10x Faster Protobuf-to-Arrow by Ditching Reflection"
 description: "How replacing prost_reflect's DynamicMessage with static decoding yielded an order-of-magnitude throughput improvement in our streaming data engine."
 date: 2026-02-13
-tags: ["stream processing", "rust", "protobuf", "arrow"]
+tags: ["stream-processing", "rust", "protobuf", "arrow"]
 ---
 
 At [Massive](https://massive.com), our streaming data engine — built on [Apache DataFusion](https://datafusion.apache.org/) and [Apache Arrow](https://arrow.apache.org/) — ingests real-time financial market data from Kafka, decodes it from protobuf, and processes it through SQL-defined dataflows. The decode step sits on the hottest path in the system: every single message passes through it. So when profiling revealed that protobuf decoding was consuming the majority of our CPU budget, it was worth taking a closer look.
