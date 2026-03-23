@@ -1,0 +1,256 @@
+---
+title: "Time-Varying Filters: Delayed Emission in Streaming SQL"
+description: "How we built watermark-driven temporal filters to delay message emission in our streaming data engine — from SQL semantics to custom optimizer rules to the physical operator."
+date: 2026-03-22
+tags: ["stream-processing", "rust", "datafusion", "sql"]
+---
+
+import TVFOperatorFlow from "../../components/TVFOperatorFlow.astro";
+
+At [Massive](https://massive.com), our streaming engine processes real-time financial market data through SQL-defined dataflows. Sources like Kafka feeds emit millions of records per second, and downstream consumers — dashboards, APIs, alerting systems — expect data within milliseconds. The system is optimized for this: records flow through the pipeline as fast as the source can produce them.
+
+But not all consumers want data immediately. Some product requirements call for *delayed* emission — a variant of stock aggregates that holds results for 15 minutes before publishing, or a feed that waits until a record's event-time window has definitively closed before releasing it. Traditionally, you'd build a separate buffering service to handle this: consume the stream, hold records in some queue, and re-emit them after the delay. That works, but it's an entirely separate system with its own state management, failure handling, and deployment lifecycle.
+
+What if you could express delayed emission as a SQL filter?
+
+## Time-Varying Filters
+
+Consider this query:
+
+```sql
+SELECT *
+FROM events
+WHERE event_time + INTERVAL '5' SECOND <= WATERMARK_TS()
+```
+
+At first glance, this looks like a regular filter. But there's something unusual: `WATERMARK_TS()` isn't a constant or a column — it's a reference to the source's *current watermark*, a monotonically advancing timestamp that tracks how far the stream has progressed in event time.
+
+The filter predicate says: "only emit a record once the watermark has advanced past that record's event time plus 5 seconds." For a record with `event_time = 10:00:01`, the condition becomes `10:00:06 <= WATERMARK_TS()`. When the record first arrives, the watermark might be at `10:00:03` — the condition is false. But watermarks only move forward. At some point the watermark will reach `10:00:06`, and the condition will become true.
+
+This is the key observation: **a predicate that depends on the watermark is not a static filter — it's a time-varying one.** The filter's truth value changes as time progresses. Instead of evaluating once and discarding records that don't match, the system can *buffer* records and re-evaluate them as the watermark advances. Once the condition holds, the record is released downstream.
+
+This concept isn't new to stream processing. Systems like [RisingWave](https://docs.risingwave.com/processing/sql/temporal-filters) and [Materialize](https://materialize.com/docs/transform-data/patterns/temporal-filters/) call them *temporal filters*. What's interesting is the implementation: making this work in a DataFusion-based engine required a custom marker UDF, a dedicated optimizer rule, and a specialized physical operator — each one building on the extensibility points that DataFusion provides.
+
+## The Marker UDF
+
+`WATERMARK_TS()` is what we call a *marker* UDF. It has no physical implementation — if it ever reaches execution, it throws an error. Its sole purpose is to be recognized and removed by the optimizer. This is a useful pattern: register a function so that users can reference it in SQL, but handle all of its semantics at plan time through rewrite rules.
+
+The UDF is registered with the DataFusion session context during initialization:
+
+```rust
+ctx.register_udf(watermark_ts_udf());
+```
+
+Its implementation is intentionally minimal:
+
+```rust
+pub fn watermark_ts_udf() -> ScalarUDF {
+    ScalarUDF::new_from_impl(WatermarkTs::new())
+}
+
+impl ScalarUDFImpl for WatermarkTs {
+    fn return_type(&self, _args: &[DataType]) -> Result<DataType> {
+        Ok(DataType::Timestamp(TimeUnit::Nanosecond, None))
+    }
+
+    fn invoke_batch(
+        &self,
+        _args: &[ColumnarValue],
+        _number_of_rows: usize,
+    ) -> Result<ColumnarValue> {
+        internal_err!(
+            "watermark_ts is a marker UDF and should not \
+            reach physical execution"
+        )
+    }
+
+    fn is_volatile(&self) -> bool {
+        true // prevents constant folding
+    }
+}
+```
+
+Marking it as `volatile` prevents DataFusion's constant-folding optimizer from evaluating it at plan time — we need it to survive into the plan so our custom rule can find it.
+
+## From Filter to TimeVaryingFilter
+
+The optimizer rule is where the interesting work happens. It runs after DataFusion's standard optimizations and scans the logical plan for `Filter` nodes whose predicates contain calls to `WATERMARK_TS()`. When it finds one, it rewrites the `Filter` into a custom logical plan node: `TimeVaryingFilter`.
+
+The rewrite isn't a simple 1:1 replacement. The rule needs to decompose the predicate into a *release plan* — a structured representation of when and under what conditions records should be emitted. This matters because time-varying conditions can be mixed with static ones:
+
+```sql
+SELECT *
+FROM events
+WHERE
+  (status = 'final' AND event_time + INTERVAL '5' SECOND <= WATERMARK_TS())
+  OR status = 'preliminary'
+```
+
+Here, `status = 'preliminary'` records should be emitted immediately — there's no time-varying condition on that branch. But `status = 'final'` records should be delayed by 5 seconds. The optimizer rule needs to decompose this into separate *branches*, each with its own release semantics.
+
+### Building a Release Plan
+
+The rule's analysis proceeds in three stages:
+
+**1. Split into disjuncts.** The top-level predicate is broken apart along `OR` boundaries. Each disjunct becomes a candidate branch in the release plan.
+
+```rust
+// Split A OR B OR C into [A, B, C]
+let disjuncts = split_disjunction(filter.predicate());
+```
+
+**2. Classify each disjunct.** Within each disjunct, conjuncts (AND-connected expressions) are separated into *static* conditions (no `WATERMARK_TS()` reference) and *time-varying* conditions (contains `WATERMARK_TS()`). The rule enforces two constraints:
+
+- **At most one time-varying condition per conjunction.** Multiple time-varying conditions in the same AND would create ambiguity about what release time to use.
+- **`WATERMARK_TS()` must appear as an upper bound.** Using it as a lower bound (e.g., `WATERMARK_TS() <= event_time`) would mean the condition is true initially and becomes permanently false as the watermark advances — useless in an append-only system.
+
+```rust
+for conjunct in split_conjunction(&disjunct) {
+    if contains_watermark_ts(conjunct) {
+        // Validate: upper-bound only, extract release_at expression
+        let release_at = extract_release_expression(conjunct)?;
+        time_varying = Some(release_at);
+    } else {
+        static_conjuncts.push(conjunct.clone());
+    }
+}
+```
+
+**3. Build branches.** Each disjunct becomes a `ReleaseBranch` with two optional components:
+
+- A **guard**: the conjunction of all static conditions in that branch. If the guard is `None`, the branch matches unconditionally.
+- A **release_at**: the time-varying expression, rewritten to remove the `WATERMARK_TS()` reference (since the physical operator will compare against the watermark directly). If `release_at` is `None`, matching records are emitted immediately.
+
+```rust
+pub struct ReleasePlan {
+    pub branches: Vec<ReleaseBranch>,
+}
+
+pub struct ReleaseBranch {
+    pub guard: Option<Arc<dyn PhysicalExpr>>,
+    pub release_at: Option<Arc<dyn PhysicalExpr>>,
+}
+```
+
+For the SQL example above, the release plan would have two branches:
+
+| Branch | Guard | release_at |
+|--------|-------|------------|
+| 1 | `status = 'final'` | `event_time + INTERVAL '5s'` |
+| 2 | `status = 'preliminary'` | `None` (immediate) |
+
+The ordering of branches matters: the physical operator evaluates them top to bottom, and the first matching branch determines the record's fate.
+
+## The Physical Operator
+
+Once the optimizer produces a `TimeVaryingFilter` logical node, the planner lowers it into a physical operator: `TimeVaryingFilterOperator`. This operator is responsible for the actual buffering and release logic at runtime.
+
+The core data structure is a `BTreeMap<i64, Vec<BufferedBatch>>`, keyed by release time in nanoseconds. The `BTreeMap` keeps entries sorted, which is exactly what we need — when a watermark arrives, we can efficiently drain all entries whose release time has been reached.
+
+### Processing Batches
+
+When a batch arrives from the input stream, the operator evaluates the release plan's branches in order:
+
+```rust
+fn process_batch(
+    &mut self,
+    batch: RecordBatch,
+    arrival_watermark: i64,
+) -> Result<Option<RecordBatch>> {
+    for (i, branch) in self.release_plan.branches.iter().enumerate() {
+        // Apply guard filter to find which rows match this branch
+        let mask = match &branch.guard {
+            Some(guard) => evaluate_boolean(guard, &batch)?,
+            None => BooleanArray::from(vec![true; batch.num_rows()]),
+        };
+
+        let matched = filter_record_batch(&batch, &mask)?;
+        if matched.num_rows() == 0 {
+            continue;
+        }
+
+        match &branch.release_at {
+            None => {
+                // Immediate branch — emit matched rows now
+                return Ok(Some(matched));
+            }
+            Some(release_at_expr) => {
+                // Time-varying branch — compute release times and buffer
+                let release_times = evaluate_i64(release_at_expr, &matched)?;
+                self.buffer_batch(matched, &release_times, arrival_watermark);
+            }
+        }
+    }
+    Ok(None)
+}
+```
+
+### Buffering and Draining
+
+Buffering inserts each batch's rows into the `BTreeMap` at their computed release time. Multiple batches can share the same release time — they're appended to the same `Vec`.
+
+When a watermark arrives, the operator drains all entries that are ready:
+
+```rust
+fn drain_up_to(&mut self, watermark_nanos: i64) -> Vec<(RecordBatch, i64)> {
+    let mut released = Vec::new();
+
+    // split_off returns everything > watermark_nanos,
+    // leaving everything <= watermark_nanos in self.buffer
+    let remaining = self.buffer.split_off(&(watermark_nanos + 1));
+    let ready = std::mem::replace(&mut self.buffer, remaining);
+
+    for (_release_time, batches) in ready {
+        for buffered in batches {
+            released.push((
+                buffered.batch,
+                buffered.arrival_watermark,
+            ));
+        }
+    }
+
+    released
+}
+```
+
+The `BTreeMap::split_off` call is the key insight for efficiency — it splits the tree in O(log n), giving us all entries up to the watermark in one operation. No iteration through irrelevant entries, no scanning the entire buffer.
+
+### Seeing It in Action
+
+Click through each stage to see how the operator processes three records with a 5-second delay:
+
+<TVFOperatorFlow />
+
+### Watermark Propagation
+
+There's a subtle correctness concern with watermark forwarding. In a normal filter, watermarks pass through unchanged — a filter only removes rows, it doesn't change the temporal semantics of the stream. But a time-varying filter *delays* rows. If we forwarded the input watermark directly, downstream operators would see a watermark claiming "all events up to time T have been processed," when in reality the time-varying filter is still holding some of them.
+
+The operator takes a conservative approach: the output watermark is derived from the *arrival watermark* of released records — specifically, the maximum arrival watermark across all records emitted in the current drain. This ensures the output watermark still correlates with the actual data that has been emitted, rather than racing ahead of it.
+
+```rust
+fn compute_output_watermark(
+    &self,
+    released: &[(RecordBatch, i64)],
+) -> Option<i64> {
+    released
+        .iter()
+        .map(|(_, arrival_wm)| *arrival_wm)
+        .max()
+}
+```
+
+## Why Upper-Bound Only?
+
+We require `WATERMARK_TS()` to appear as the *upper bound* of the comparison — that is, the side that the time-varying expression must be less than or equal to. This isn't arbitrary.
+
+Consider the inverse: `WATERMARK_TS() <= event_time + INTERVAL '5' SECOND`. When a record arrives with `event_time = 10:00:01`, the condition is `WATERMARK_TS() <= 10:00:06`. If the watermark is at `10:00:03`, this is true. But watermarks are monotonic — once the watermark passes `10:00:06`, the condition becomes permanently false. In an append-only system, that means the record should have been emitted immediately and can never be emitted later. There's no useful "wait" semantic — it's just a regular filter with extra steps.
+
+The upper-bound constraint ensures that time-varying conditions always express *"wait until later"* — a predicate that is false now but will become true in the future. This is the only direction that makes sense for buffered, delayed emission.
+
+## Closing Thoughts
+
+The throughline here is similar to what I described in the [IN-list post](/blog/in-lists-dont-have-to-break-your-sort-order): the boundary between your system and the query framework is where the interesting engineering lives. DataFusion provides the optimizer infrastructure, the expression evaluation machinery, and the plan node abstraction. But it doesn't know about watermarks, or that a filter might be time-varying, or that buffering with a `BTreeMap` is the right physical strategy. You have to build that translation layer.
+
+What makes this work cleanly is that DataFusion's extension points — `ScalarUDFImpl` for the marker function, `OptimizerRule` for the rewrite, `UserDefinedLogicalNodeCore` for the plan node — are designed for exactly this kind of addition. The time-varying filter isn't a fork or a patch. It's a new node type that participates in the same plan lifecycle as everything else: optimized by the framework's existing passes, lowered through the same planner, executed alongside standard operators.
+
+From a stream processing perspective, the pattern is worth highlighting: **SQL predicates can encode temporal semantics**. A `WHERE` clause that references a watermark isn't just filtering — it's a scheduling directive. "Emit this record when the watermark says it's time." The optimizer's job is to recognize that directive and produce a physical operator that honors it. The result is that delayed emission — something that would normally require a separate buffering system — becomes a one-line SQL change.

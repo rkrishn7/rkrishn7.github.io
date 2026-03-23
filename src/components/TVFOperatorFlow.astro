@@ -1,0 +1,582 @@
+---
+const steps = [
+  {
+    label: "Records Arrive",
+    description:
+      "Three records arrive from the source. The operator computes each record's release time: event_time + 5s.",
+  },
+  {
+    label: "Evaluate & Buffer",
+    description:
+      "For each record, release_at > watermark (:03), so all three are buffered in a BTreeMap ordered by release time — ready to be drained efficiently when the watermark advances.",
+  },
+  {
+    label: "Watermark Advances",
+    description:
+      "The watermark advances to :07. The operator drains all entries with release_time ≤ :07, emitting R1 and R2 downstream. R3 remains buffered.",
+  },
+  {
+    label: "Buffer Drains",
+    description:
+      "The watermark reaches :08. R3 is released and the buffer is empty. All three records have been emitted with their intended delay.",
+  },
+];
+---
+
+<div class="tvf-lifecycle">
+  <div class="tvf-steps">
+    {
+      steps.map((step, i) => (
+        <button
+          class={`tvf-step-btn ${i === 0 ? "active" : ""}`}
+          data-step={i}
+        >
+          <span class="tvf-step-num">{i + 1}</span>
+          <span class="tvf-step-label">{step.label}</span>
+        </button>
+      ))
+    }
+  </div>
+  <div class="tvf-progress-track">
+    <div class="tvf-progress-bar" style="width: 25%"></div>
+  </div>
+  <div class="tvf-panels">
+    {/* Panel 0: Records Arrive */}
+    <div class="tvf-panel active" data-panel="0">
+      <p class="tvf-description">{steps[0].description}</p>
+      <div class="tvf-card">
+        <div class="tvf-record-list">
+          <div class="tvf-rec">
+            <span class="tvf-rec-name">R1</span>
+            <code class="tvf-rec-detail">event_time = :01</code>
+            <span class="tvf-rec-arrow">&rarr;</span>
+            <code class="tvf-rec-computed">release_at = :01 + 5s = <strong>:06</strong></code>
+          </div>
+          <div class="tvf-rec">
+            <span class="tvf-rec-name">R2</span>
+            <code class="tvf-rec-detail">event_time = :02</code>
+            <span class="tvf-rec-arrow">&rarr;</span>
+            <code class="tvf-rec-computed">release_at = :02 + 5s = <strong>:07</strong></code>
+          </div>
+          <div class="tvf-rec">
+            <span class="tvf-rec-name">R3</span>
+            <code class="tvf-rec-detail">event_time = :03</code>
+            <span class="tvf-rec-arrow">&rarr;</span>
+            <code class="tvf-rec-computed">release_at = :03 + 5s = <strong>:08</strong></code>
+          </div>
+        </div>
+        <div class="tvf-wm-bar">
+          <div class="tvf-wm-label">watermark</div>
+          <div class="tvf-wm-track">
+            <div class="tvf-wm-fill" style="width: 20%"></div>
+          </div>
+          <div class="tvf-wm-value">:03</div>
+        </div>
+      </div>
+    </div>
+
+    {/* Panel 1: Evaluate & Buffer */}
+    <div class="tvf-panel" data-panel="1">
+      <p class="tvf-description">{steps[1].description}</p>
+      <div class="tvf-card">
+        <div class="tvf-buf-heading">
+          <code>BTreeMap&lt;release_time, Vec&lt;Batch&gt;&gt;</code>
+        </div>
+        <div class="tvf-buffer">
+          <div class="tvf-buf-entry">
+            <span class="tvf-buf-key">:06</span>
+            <span class="tvf-buf-arrow">&rarr;</span>
+            <span class="tvf-buf-val tvf-waiting">[R1]</span>
+          </div>
+          <div class="tvf-buf-entry">
+            <span class="tvf-buf-key">:07</span>
+            <span class="tvf-buf-arrow">&rarr;</span>
+            <span class="tvf-buf-val tvf-waiting">[R2]</span>
+          </div>
+          <div class="tvf-buf-entry">
+            <span class="tvf-buf-key">:08</span>
+            <span class="tvf-buf-arrow">&rarr;</span>
+            <span class="tvf-buf-val tvf-waiting">[R3]</span>
+          </div>
+        </div>
+        <div class="tvf-wm-bar">
+          <div class="tvf-wm-label">watermark</div>
+          <div class="tvf-wm-track">
+            <div class="tvf-wm-fill" style="width: 20%"></div>
+          </div>
+          <div class="tvf-wm-value">:03</div>
+        </div>
+      </div>
+    </div>
+
+    {/* Panel 2: Watermark Advances */}
+    <div class="tvf-panel" data-panel="2">
+      <p class="tvf-description">{steps[2].description}</p>
+      <div class="tvf-card">
+        <div class="tvf-buf-heading">
+          <code>BTreeMap&lt;release_time, Vec&lt;Batch&gt;&gt;</code>
+        </div>
+        <div class="tvf-buffer">
+          <div class="tvf-buf-entry tvf-released">
+            <span class="tvf-buf-key">:06</span>
+            <span class="tvf-buf-arrow">&rarr;</span>
+            <span class="tvf-buf-val">[R1]</span>
+            <span class="tvf-release-badge">released</span>
+          </div>
+          <div class="tvf-buf-entry tvf-released">
+            <span class="tvf-buf-key">:07</span>
+            <span class="tvf-buf-arrow">&rarr;</span>
+            <span class="tvf-buf-val">[R2]</span>
+            <span class="tvf-release-badge">released</span>
+          </div>
+          <div class="tvf-buf-entry">
+            <span class="tvf-buf-key">:08</span>
+            <span class="tvf-buf-arrow">&rarr;</span>
+            <span class="tvf-buf-val tvf-waiting">[R3]</span>
+          </div>
+        </div>
+        <div class="tvf-wm-bar">
+          <div class="tvf-wm-label">watermark</div>
+          <div class="tvf-wm-track">
+            <div class="tvf-wm-fill" style="width: 65%"></div>
+          </div>
+          <div class="tvf-wm-value">:07</div>
+        </div>
+        <div class="tvf-output">
+          <div class="tvf-output-label">&darr; downstream</div>
+          <div class="tvf-output-records">
+            <span class="tvf-output-rec">R1</span>
+            <span class="tvf-output-rec">R2</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {/* Panel 3: Buffer Drains */}
+    <div class="tvf-panel" data-panel="3">
+      <p class="tvf-description">{steps[3].description}</p>
+      <div class="tvf-card">
+        <div class="tvf-buf-heading">
+          <code>BTreeMap&lt;release_time, Vec&lt;Batch&gt;&gt;</code>
+        </div>
+        <div class="tvf-buffer tvf-buffer-empty">
+          <span class="tvf-empty-label">&empty; empty</span>
+        </div>
+        <div class="tvf-wm-bar">
+          <div class="tvf-wm-label">watermark</div>
+          <div class="tvf-wm-track">
+            <div class="tvf-wm-fill" style="width: 100%"></div>
+          </div>
+          <div class="tvf-wm-value">:08</div>
+        </div>
+        <div class="tvf-output">
+          <div class="tvf-output-label">&darr; downstream</div>
+          <div class="tvf-output-records">
+            <span class="tvf-output-rec">R1</span>
+            <span class="tvf-output-rec">R2</span>
+            <span class="tvf-output-rec">R3</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  .tvf-lifecycle {
+    margin: 2rem 0;
+    border: 1px solid var(--color-border);
+    border-radius: 0.75rem;
+    overflow: hidden;
+    background-color: var(--color-surface);
+  }
+
+  .tvf-steps {
+    display: flex;
+    gap: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .tvf-steps::-webkit-scrollbar {
+    display: none;
+  }
+
+  .tvf-progress-track {
+    height: 2px;
+    background-color: var(--color-border);
+  }
+
+  .tvf-progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #06b6d4, #10b981);
+    transition: width 0.3s ease;
+  }
+
+  .tvf-step-btn {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    border: none;
+    background: transparent;
+    color: var(--color-text-muted);
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: color 0.2s, background-color 0.2s;
+    white-space: nowrap;
+  }
+
+  .tvf-step-btn:hover {
+    color: var(--color-text);
+    background-color: var(--color-surface-hover);
+  }
+
+  .tvf-step-btn.active {
+    color: var(--color-accent);
+  }
+
+  .tvf-step-num {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.25rem;
+    height: 1.25rem;
+    border-radius: 50%;
+    font-size: 0.65rem;
+    font-weight: 600;
+    background-color: var(--color-border);
+    color: var(--color-text-muted);
+    flex-shrink: 0;
+    transition: background-color 0.2s, color 0.2s;
+  }
+
+  .tvf-step-btn.active .tvf-step-num {
+    background-color: var(--color-accent);
+    color: #fff;
+  }
+
+  .tvf-panels {
+    padding: 1.25rem 1.5rem;
+    min-height: 10rem;
+  }
+
+  .tvf-panel {
+    display: none;
+    animation: tvf-fade-in 0.3s ease;
+  }
+
+  .tvf-panel.active {
+    display: block;
+  }
+
+  @keyframes tvf-fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .tvf-description {
+    margin: 0 0 1rem 0;
+    color: var(--color-text-secondary);
+    font-size: 0.9rem;
+    line-height: 1.6;
+  }
+
+  /* Card container */
+  .tvf-card {
+    border: 1px solid var(--color-border);
+    border-radius: 0.5rem;
+    background-color: var(--color-bg);
+    overflow: hidden;
+  }
+
+  /* Record list (step 1) */
+  .tvf-record-list {
+    padding: 0.75rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .tvf-rec {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .tvf-rec-name {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.1rem 0.4rem;
+    border-radius: 9999px;
+    background-color: rgba(6, 182, 212, 0.15);
+    color: var(--color-accent);
+    flex-shrink: 0;
+  }
+
+  .tvf-rec-detail,
+  .tvf-rec-computed {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.8rem;
+    color: var(--color-text-secondary);
+    background: transparent;
+    padding: 0;
+  }
+
+  .tvf-rec-computed strong {
+    color: var(--color-text);
+  }
+
+  .tvf-rec-arrow {
+    color: var(--color-text-muted);
+    font-size: 0.8rem;
+  }
+
+  /* Buffer heading */
+  .tvf-buf-heading {
+    padding: 0.6rem 1rem;
+    border-bottom: 1px solid var(--color-border);
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-text-muted);
+  }
+
+  .tvf-buf-heading code {
+    font-size: 0.65rem;
+    text-transform: none;
+    letter-spacing: normal;
+    background: transparent;
+    padding: 0;
+    color: var(--color-text-muted);
+  }
+
+  /* Buffer entries */
+  .tvf-buffer {
+    padding: 0.5rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+
+  .tvf-buf-entry {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.35rem 0.6rem;
+    border-radius: 0.375rem;
+    border: 1px solid var(--color-border);
+    background-color: var(--color-surface);
+    transition: border-color 0.2s, background-color 0.2s;
+  }
+
+  .tvf-buf-entry.tvf-released {
+    border-color: #10b981;
+    background-color: rgba(16, 185, 129, 0.05);
+  }
+
+  .tvf-buf-key {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--color-text);
+    min-width: 2rem;
+  }
+
+  .tvf-buf-arrow {
+    color: var(--color-text-muted);
+    font-size: 0.75rem;
+  }
+
+  .tvf-buf-val {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.75rem;
+    color: var(--color-text);
+  }
+
+  .tvf-buf-val.tvf-waiting {
+    color: var(--color-text-secondary);
+  }
+
+  .tvf-release-badge {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.65rem;
+    font-weight: 500;
+    padding: 0.1rem 0.4rem;
+    border-radius: 9999px;
+    background-color: rgba(16, 185, 129, 0.15);
+    color: #10b981;
+    margin-left: auto;
+  }
+
+  /* Buffer empty state */
+  .tvf-buffer-empty {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 4rem;
+  }
+
+  .tvf-empty-label {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+  }
+
+  /* Watermark bar */
+  .tvf-wm-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.6rem 1rem;
+    border-top: 1px solid var(--color-border);
+  }
+
+  .tvf-wm-label {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-text-muted);
+    flex-shrink: 0;
+  }
+
+  .tvf-wm-track {
+    flex: 1;
+    height: 4px;
+    border-radius: 2px;
+    background-color: var(--color-border);
+    overflow: hidden;
+  }
+
+  .tvf-wm-fill {
+    height: 100%;
+    border-radius: 2px;
+    background: linear-gradient(90deg, #06b6d4, #10b981);
+    transition: width 0.3s ease;
+  }
+
+  .tvf-wm-value {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--color-text);
+    flex-shrink: 0;
+    min-width: 2rem;
+  }
+
+  /* Output section */
+  .tvf-output {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.75rem 1rem;
+    border-top: 1px solid var(--color-border);
+  }
+
+  .tvf-output-label {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-text-muted);
+  }
+
+  .tvf-output-records {
+    display: flex;
+    gap: 0.4rem;
+  }
+
+  .tvf-output-rec {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 0.15rem 0.5rem;
+    border-radius: 9999px;
+    background-color: rgba(16, 185, 129, 0.15);
+    color: #10b981;
+  }
+</style>
+
+<script>
+  const container = document.querySelector(".tvf-lifecycle");
+  if (container) {
+    const buttons =
+      container.querySelectorAll<HTMLButtonElement>(".tvf-step-btn");
+    const panels = container.querySelectorAll<HTMLElement>(".tvf-panel");
+    const progressBar =
+      container.querySelector<HTMLElement>(".tvf-progress-bar");
+    const stepsContainer =
+      container.querySelector<HTMLElement>(".tvf-steps");
+    let currentStep = 0;
+
+    function updateProgressBar() {
+      if (!progressBar || !stepsContainer) return;
+      const btn = buttons[currentStep];
+      const containerRect = stepsContainer.getBoundingClientRect();
+      const btnRect = btn.getBoundingClientRect();
+      const rightEdge = btnRect.right - containerRect.left;
+      const visibleWidth = containerRect.width;
+      const pct = Math.max(
+        0,
+        Math.min(100, (rightEdge / visibleWidth) * 100),
+      );
+      progressBar.style.width = `${pct}%`;
+    }
+
+    stepsContainer?.addEventListener("scroll", updateProgressBar);
+
+    buttons.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const step = Number(btn.dataset.step);
+        const goingForward = step > currentStep;
+        currentStep = step;
+
+        buttons.forEach((b) => b.classList.remove("active"));
+        panels.forEach((p) => p.classList.remove("active"));
+
+        btn.classList.add("active");
+
+        const neighbor = goingForward
+          ? buttons[step + 1]
+          : buttons[step - 1];
+        if (neighbor) {
+          neighbor.scrollIntoView({
+            behavior: "smooth",
+            block: "nearest",
+            inline: "nearest",
+          });
+        } else {
+          btn.scrollIntoView({
+            behavior: "smooth",
+            block: "nearest",
+            inline: "nearest",
+          });
+        }
+
+        const panel = container.querySelector<HTMLElement>(
+          `[data-panel="${step}"]`,
+        );
+        if (panel) panel.classList.add("active");
+
+        updateProgressBar();
+      });
+    });
+
+    updateProgressBar();
+  }
+</script>
